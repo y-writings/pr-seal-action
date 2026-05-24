@@ -19,7 +19,7 @@ describe("release-please config", () => {
     expect(releasePleaseConfig["skip-labeling"]).toBe(true);
   });
 
-  it("bootstraps the root package from 0.0.0", () => {
-    expect(releasePleaseManifest["."]).toBe("0.0.0");
+  it("bootstraps the root package so the first feat release stays in the 0.1.x series", () => {
+    expect(releasePleaseManifest["."]).toBe("0.0.1");
   });
 });

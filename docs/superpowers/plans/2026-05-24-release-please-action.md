@@ -43,8 +43,8 @@ describe("release-please config", () => {
     expect(releasePleaseConfig["skip-labeling"]).toBe(true);
   });
 
-  it("bootstraps the root package from 0.0.0", () => {
-    expect(releasePleaseManifest["."]).toBe("0.0.0");
+  it("bootstraps the root package so the first feat release stays in the 0.1.x series", () => {
+    expect(releasePleaseManifest["."]).toBe("0.0.1");
   });
 });
 ```
@@ -77,7 +77,7 @@ Create `.release-please-manifest.json`:
 
 ```json
 {
-  ".": "0.0.0"
+  ".": "0.0.1"
 }
 ```
 
@@ -318,6 +318,6 @@ Expected: diff only includes Release Please config/workflow, weekly CalVer prefi
 
 ## Self-Review
 
-- Spec coverage: The plan covers the Release Please workflow, existing `PULL_REQUEST_CREATOR` token source, manifest bootstrap from `0.0.0`, manual Release PR merge behavior, GitHub Release creation, moving `v0` tag update, weekly `weekly-` CalVer tags, separated changelog files, minimal permissions, and workflow/config tests.
+- Spec coverage: The plan covers the Release Please workflow, existing `PULL_REQUEST_CREATOR` token source, manifest bootstrap from `0.0.1`, manual Release PR merge behavior, GitHub Release creation, moving `v0` tag update, weekly `weekly-` CalVer tags, separated changelog files, minimal permissions, and workflow/config tests.
 - Placeholder scan: No placeholders remain. Every code/config step includes exact file contents or exact replacement snippets.
 - Type consistency: Test file names, workflow IDs, action SHAs, config keys, and output names are consistent across tasks.
