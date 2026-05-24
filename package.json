@@ -1,0 +1,26 @@
+{
+  "name": "pr-seal-action",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Verify, approve, and enable auto-merge for tightly-scoped pull requests.",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "package": "ncc build src/main.ts --target es2022 --source-map --out dist",
+    "check": "npm run build && npm test && npm run package"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@actions/core": "3.0.1",
+    "@actions/github": "9.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "@vercel/ncc": "0.38.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.7"
+  }
+}
