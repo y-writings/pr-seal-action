@@ -13,4 +13,10 @@ describe("weekly changelog workflow", () => {
     expect(workflow).toContain("expected-author: y-writings-pr-creator-bot");
     expect(workflow).not.toContain("expected-author: app/y-writings-pr-creator-bot");
   });
+
+  it("writes weekly merged pull requests outside CHANGELOG.md", () => {
+    expect(workflow).toContain("--output WEEKLY_MERGED_PULL_REQUESTS.md");
+    expect(workflow).toContain("WEEKLY_MERGED_PULL_REQUESTS.md");
+    expect(workflow).not.toContain("CHANGELOG.md");
+  });
 });
