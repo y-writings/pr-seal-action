@@ -2,7 +2,7 @@ require('./sourcemap-register.js');/******/ (() => { // webpackBootstrap
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 9248:
+/***/ 4171:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 
@@ -14,7 +14,7 @@ exports.fetchPullRequestSnapshot = fetchPullRequestSnapshot;
 exports.approvePullRequest = approvePullRequest;
 exports.enableAutoMerge = enableAutoMerge;
 async function createGitHubClients(tokens) {
-    const github = await Promise.all(/* import() */[__nccwpck_require__.e(119), __nccwpck_require__.e(157)]).then(__nccwpck_require__.bind(__nccwpck_require__, 157));
+    const github = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(358)]).then(__nccwpck_require__.bind(__nccwpck_require__, 7358));
     const readClient = github.getOctokit(tokens.mergeToken);
     const approveClient = github.getOctokit(tokens.approveToken);
     const mergeClient = github.getOctokit(tokens.mergeToken);
@@ -140,7 +140,7 @@ function toGraphqlMergeMethod(mergeMethod) {
 
 /***/ }),
 
-/***/ 8422:
+/***/ 6713:
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -209,14 +209,14 @@ function parseMergeMethod(value) {
 
 /***/ }),
 
-/***/ 774:
+/***/ 3169:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.sealPullRequest = sealPullRequest;
-const github_1 = __nccwpck_require__(9248);
-const verify_1 = __nccwpck_require__(5538);
+const github_1 = __nccwpck_require__(4171);
+const verify_1 = __nccwpck_require__(1237);
 async function sealPullRequest(inputs, clients) {
     const { owner, repo, value } = inputs.repository;
     const snapshot = await (0, github_1.fetchPullRequestSnapshot)(clients.mergeGraphql, owner, repo, inputs.pullRequestNumber);
@@ -240,7 +240,7 @@ async function sealPullRequest(inputs, clients) {
 
 /***/ }),
 
-/***/ 5538:
+/***/ 1237:
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -686,9 +686,9 @@ var exports = __webpack_exports__;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
-const github_1 = __nccwpck_require__(9248);
-const inputs_1 = __nccwpck_require__(8422);
-const seal_1 = __nccwpck_require__(774);
+const github_1 = __nccwpck_require__(4171);
+const inputs_1 = __nccwpck_require__(6713);
+const seal_1 = __nccwpck_require__(3169);
 async function run(dependencies) {
     const resolvedDependencies = dependencies ?? (await createDefaultDependencies());
     try {
@@ -711,8 +711,8 @@ async function run(dependencies) {
     }
 }
 async function createDefaultDependencies() {
-    const core = await Promise.all(/* import() */[__nccwpck_require__.e(119), __nccwpck_require__.e(421)]).then(__nccwpck_require__.bind(__nccwpck_require__, 6421));
-    const github = await Promise.all(/* import() */[__nccwpck_require__.e(119), __nccwpck_require__.e(157)]).then(__nccwpck_require__.bind(__nccwpck_require__, 157));
+    const core = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(335)]).then(__nccwpck_require__.bind(__nccwpck_require__, 6335));
+    const github = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(358)]).then(__nccwpck_require__.bind(__nccwpck_require__, 7358));
     return {
         core,
         context: github.context,
