@@ -8,4 +8,9 @@ describe("weekly changelog workflow", () => {
     expect(workflow).not.toContain('echo "range=${TAG}"');
     expect(workflow).toContain('echo "range="');
   });
+
+  it("expects the GitHub App pull request author login returned by GitHub", () => {
+    expect(workflow).toContain("expected-author: y-writings-pr-creator-bot");
+    expect(workflow).not.toContain("expected-author: app/y-writings-pr-creator-bot");
+  });
 });

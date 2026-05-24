@@ -117,7 +117,7 @@ jobs:
         with:
           repository: ${{ github.repository }}
           pull-request-number: ${{ steps.changelog-pull-request.outputs.pull-request-number }}
-          expected-author: app/y-writings-pr-creator-bot
+          expected-author: y-writings-pr-creator-bot
           allowed-paths: |
             CHANGELOG.md
           approve-token: ${{ steps.approver-token.outputs.token }}
