@@ -58,7 +58,7 @@ jobs:
           if [ -n "${PREVIOUS_TAG}" ]; then
             echo "range=${PREVIOUS_TAG}..${TAG}" >> "${GITHUB_OUTPUT}"
           else
-            echo "range=${TAG}" >> "${GITHUB_OUTPUT}"
+            echo "range=" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Generate CHANGELOG.md from release tag range
