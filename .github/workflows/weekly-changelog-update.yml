@@ -61,12 +61,12 @@ jobs:
             echo "range=" >> "${GITHUB_OUTPUT}"
           fi
 
-      - name: Generate CHANGELOG.md from release tag range
+      - name: Generate WEEKLY_MERGED_PULL_REQUESTS.md from release tag range
         if: ${{ steps.calver-tag.outputs.created == 'true' }}
         uses: orhun/git-cliff-action@c93ef52f3d0ddcdcc9bd5447d98d458a11cd4f72 # v4.7.1
         with:
           config: cliff.toml
-          args: --verbose --tag ${{ steps.calver-tag.outputs.tag }} --output CHANGELOG.md ${{ steps.cliff-range.outputs.range }}
+          args: --verbose --tag ${{ steps.calver-tag.outputs.tag }} --output WEEKLY_MERGED_PULL_REQUESTS.md ${{ steps.cliff-range.outputs.range }}
           github_token: ${{ steps.pr-creator-token.outputs.token }}
 
       - name: Create or update changelog pull request
@@ -76,7 +76,7 @@ jobs:
         with:
           token: ${{ steps.pr-creator-token.outputs.token }}
           add-paths: |
-            CHANGELOG.md
+            WEEKLY_MERGED_PULL_REQUESTS.md
           author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
           committer: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
           branch: automation/update-changelog
@@ -86,7 +86,7 @@ jobs:
           title: "docs(changelog): update changelog"
           body: |
             ## Summary
-            - regenerate `CHANGELOG.md` from `${{ steps.cliff-range.outputs.range }}`
+            - regenerate `WEEKLY_MERGED_PULL_REQUESTS.md` from `${{ steps.cliff-range.outputs.range }}`
             - generated after `${{ steps.calver-tag.outputs.tag }}` was created on `main`
             - auto-merge is enabled after automated validation
 
@@ -119,8 +119,8 @@ jobs:
           pull-request-number: ${{ steps.changelog-pull-request.outputs.pull-request-number }}
           expected-author: y-writings-pr-creator-bot
           allowed-paths: |
-            CHANGELOG.md
+            WEEKLY_MERGED_PULL_REQUESTS.md
           approve-token: ${{ steps.approver-token.outputs.token }}
           merge-token: ${{ steps.pr-creator-token.outputs.token }}
           merge-method: squash
-          approve-body: Automated approval for CHANGELOG.md-only release PR.
+          approve-body: Automated approval for WEEKLY_MERGED_PULL_REQUESTS.md-only release PR.
