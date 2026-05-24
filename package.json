@@ -4,11 +4,12 @@
   "private": true,
   "description": "Verify, approve, and enable auto-merge for tightly-scoped pull requests.",
   "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "tsc --noEmit",
     "test": "vitest run",
     "package": "ncc build src/main.ts --target es2022 --source-map --out dist",
-    "check": "npm run build && npm test && npm run package"
+    "check": "pnpm build && pnpm test && pnpm package"
   },
   "engines": {
     "node": ">=24"
