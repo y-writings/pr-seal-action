@@ -13,7 +13,7 @@ Release Please will own SemVer release pull requests, `CHANGELOG.md`, GitHub Rel
 
 - Add Release Please automation using `googleapis/release-please-action`.
 - Use the same `PULL_REQUEST_CREATOR` GitHub App token source as the weekly changelog workflow.
-- Bootstrap releases from the current `0.0.0` version and let the first Release PR propose `0.1.0` from existing Conventional Commit history.
+- Bootstrap releases from `0.0.1` so the first Release PR proposes `0.1.0` from existing Conventional Commit history.
 - Keep Release Please PRs manually merged.
 - Create GitHub Releases and SemVer tags when Release Please release PRs are merged.
 - Update the moving major tag `v0` after each 0.x release.
@@ -116,7 +116,7 @@ Add `.release-please-manifest.json`:
 
 ```json
 {
-  ".": "0.0.0"
+  ".": "0.0.1"
 }
 ```
 
@@ -128,7 +128,7 @@ Release Please manages these files:
 
 Release Please must not be extended in this change to manage `pnpm-lock.yaml` or regenerate `dist/index.js`.
 
-The initial Release PR should use existing Conventional Commit history. Because the repository currently has a `feat:` commit and starts from `0.0.0`, the expected first proposed version is `0.1.0`.
+The initial Release PR should use existing Conventional Commit history. Because Release Please treats `0.0.0` as an initial release that can become `1.0.0`, the manifest starts from `0.0.1` so the existing `feat:` commit proposes `0.1.0`.
 
 ## Moving Major Tag
 
@@ -200,6 +200,6 @@ Config tests should verify:
 
 - `release-please-config.json` uses the `node` release type.
 - `release-please-config.json` sets `skip-labeling` to `true`.
-- `.release-please-manifest.json` bootstraps the root package at `0.0.0`.
+- `.release-please-manifest.json` bootstraps the root package at `0.0.1`.
 
 Local verification should run `pnpm test` and `pnpm build`.
