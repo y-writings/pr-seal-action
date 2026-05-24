@@ -1,0 +1,46 @@
+name: pr-seal-action
+description: Verify an expected-author pull request, approve it, and enable auto-merge with the verified head SHA.
+author: y-writings
+
+inputs:
+  repository:
+    description: Repository in owner/name format. Defaults to the current workflow repository.
+    required: false
+  pull-request-number:
+    description: Pull request number to verify, approve, and enable auto-merge for.
+    required: true
+  expected-author:
+    description: Exact GitHub login expected for the pull request author.
+    required: true
+  allowed-paths:
+    description: Newline-separated file paths that the pull request is allowed to change. Paths are exact matches, not globs.
+    required: true
+  approve-token:
+    description: Token used only to create the approval review.
+    required: true
+  merge-token:
+    description: Token used to read the pull request and enable auto-merge.
+    required: true
+  merge-method:
+    description: Auto-merge method. One of squash, merge, or rebase.
+    required: false
+    default: squash
+  approve-body:
+    description: Body for the automated approval review.
+    required: false
+
+outputs:
+  pull-request-id:
+    description: GraphQL node ID of the verified pull request.
+  head-sha:
+    description: Verified pull request head SHA.
+  changed-files:
+    description: JSON array of changed file paths considered during verification.
+  approved:
+    description: Whether an approval review was created.
+  auto-merge-enabled:
+    description: Whether auto-merge was enabled.
+
+runs:
+  using: node24
+  main: dist/index.js
