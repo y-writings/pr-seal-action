@@ -40,7 +40,7 @@ jobs:
 
       - name: Create weekly CalVer tag through GitHub API
         id: calver-tag
-        uses: y-writings/calver-beacon-action@main
+        uses: y-writings/calver-beacon-action@87fc751559901b887938bc3dfcd8ca7126d72421
         with:
           calver_date: ${{ inputs.calver_date }}
           target_ref: main
