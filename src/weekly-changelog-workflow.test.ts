@@ -19,4 +19,13 @@ describe("weekly changelog workflow", () => {
     expect(workflow).toContain("WEEKLY_MERGED_PULL_REQUESTS.md");
     expect(workflow).not.toContain("CHANGELOG.md");
   });
+
+  it("uses the tag-prefix capable calver-beacon-action commit", () => {
+    expect(workflow).toContain("y-writings/calver-beacon-action@0ba68eee60be71b3549212bf896fac07df928d4d");
+    expect(workflow).not.toContain("y-writings/calver-beacon-action@87fc751559901b887938bc3dfcd8ca7126d72421");
+  });
+
+  it("creates weekly CalVer tags in a separate namespace", () => {
+    expect(workflow).toContain("tag_prefix: weekly-");
+  });
 });

@@ -1,0 +1,55 @@
+name: release-please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Run Release Please
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create pull request creator GitHub App token
+        id: pr-creator-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.PULL_REQUEST_CREATOR_APP_ID }}
+          private-key: ${{ secrets.PULL_REQUEST_CREATOR_APP_PRIVATE_KEY }}
+
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          token: ${{ steps.pr-creator-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Check out released commit
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          fetch-depth: 0
+          token: ${{ steps.pr-creator-token.outputs.token }}
+
+      - name: Update moving major tag
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          MAJOR_TAG: v${{ steps.release.outputs.major }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -d "${MAJOR_TAG}" || true
+          git push origin ":refs/tags/${MAJOR_TAG}" || true
+          git tag -a "${MAJOR_TAG}" -m "Release ${MAJOR_TAG}"
+          git push origin "refs/tags/${MAJOR_TAG}"

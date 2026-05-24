@@ -101,10 +101,12 @@ Add `release-please-config.json`:
 ```json
 {
   "release-type": "node",
+  "include-component-in-tag": false,
   "skip-labeling": true,
   "packages": {
     ".": {
-      "release-type": "node"
+      "release-type": "node",
+      "include-component-in-tag": false
     }
   }
 }
@@ -130,11 +132,11 @@ The initial Release PR should use existing Conventional Commit history. Because 
 
 ## Moving Major Tag
 
-When the Release Please step reports `release_created`, the workflow checks out `main` using the `PULL_REQUEST_CREATOR` token and updates `v${{ steps.release.outputs.major }}`.
+When the Release Please step reports `release_created`, the workflow checks out `steps.release.outputs.sha` using the `PULL_REQUEST_CREATOR` token and updates `v${{ steps.release.outputs.major }}`.
 
 For the initial 0.x release series, this updates `v0`.
 
-The tag update mirrors the Release Please documentation pattern for GitHub Actions:
+The tag update mirrors the Release Please documentation pattern for GitHub Actions, but pins the checkout to the released commit SHA to avoid moving `v0` to a newer `main` commit if the branch advances while the workflow is running:
 
 - Delete local `v0` if present.
 - Delete remote `v0` if present.
