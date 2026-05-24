@@ -1,0 +1,11 @@
+{
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "skip-labeling": true,
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "include-component-in-tag": false
+    }
+  }
+}
