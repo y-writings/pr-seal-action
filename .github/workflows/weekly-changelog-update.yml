@@ -27,8 +27,8 @@ jobs:
         id: pr-creator-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
-          app-id: ${{ vars.PULL_REQUEST_CREATOR_APP_ID }}
-          private-key: ${{ secrets.PULL_REQUEST_CREATOR_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.PR_CREATOR_APP_ID }}
+          private-key: ${{ secrets.PR_CREATOR_APP_PRIVATE_KEY }}
 
       - name: Check out repository for local action and changelog generation
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -94,13 +94,13 @@ jobs:
       - name: Validate changelog approver app
         if: ${{ steps.changelog-pull-request.outputs.pull-request-number != '' }}
         env:
-          PULL_REQUEST_CREATOR_APP_ID: ${{ vars.PULL_REQUEST_CREATOR_APP_ID }}
-          CHANGELOG_APPROVER_APP_ID: ${{ vars.CHANGELOG_APPROVER_APP_ID }}
+          PR_CREATOR_APP_ID: ${{ vars.PR_CREATOR_APP_ID }}
+          PR_APPROVER_APP_ID: ${{ vars.PR_APPROVER_APP_ID }}
         run: |
-          if [ -n "${PULL_REQUEST_CREATOR_APP_ID}" ] && \
-            [ -n "${CHANGELOG_APPROVER_APP_ID}" ] && \
-            [ "${PULL_REQUEST_CREATOR_APP_ID}" = "${CHANGELOG_APPROVER_APP_ID}" ]; then
-            echo "CHANGELOG_APPROVER_APP_ID must be different from PULL_REQUEST_CREATOR_APP_ID" >&2
+          if [ -n "${PR_CREATOR_APP_ID}" ] && \
+            [ -n "${PR_APPROVER_APP_ID}" ] && \
+            [ "${PR_CREATOR_APP_ID}" = "${PR_APPROVER_APP_ID}" ]; then
+            echo "PR_APPROVER_APP_ID must be different from PR_CREATOR_APP_ID" >&2
             exit 1
           fi
 
@@ -109,8 +109,8 @@ jobs:
         if: ${{ steps.changelog-pull-request.outputs.pull-request-number != '' }}
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
-          app-id: ${{ vars.CHANGELOG_APPROVER_APP_ID }}
-          private-key: ${{ secrets.CHANGELOG_APPROVER_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.PR_APPROVER_APP_ID }}
+          private-key: ${{ secrets.PR_APPROVER_APP_PRIVATE_KEY }}
 
       - name: Verify, approve, and enable auto-merge for changelog pull request
         if: ${{ steps.changelog-pull-request.outputs.pull-request-number != '' }}
