@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { run } from "./main";
+import { run } from "./run";
 
 function inputReader(values: Record<string, string | undefined>) {
   return vi.fn((name: string, options?: { required?: boolean }) => {
@@ -27,12 +27,12 @@ describe("run", () => {
       setOutput: vi.fn(),
       setFailed: vi.fn(),
     };
-    const clients = {
-      readClient: { rest: { pulls: { get: vi.fn(), listFiles: vi.fn() } }, paginate: vi.fn() },
-      approveGraphql: vi.fn(),
-      mergeGraphql: vi.fn(),
+    const github = {
+      fetchPullRequestSnapshot: vi.fn(),
+      approvePullRequest: vi.fn(),
+      enableAutoMerge: vi.fn(),
     };
-    const createGitHubClients = vi.fn(async () => clients);
+    const createGitHubSealAdapter = vi.fn(async () => github);
     const sealPullRequest = vi.fn(async () => ({
       pullRequestId: "PR_node_id",
       headSha: "abc123",
@@ -44,19 +44,19 @@ describe("run", () => {
     await run({
       core,
       context: { repo: { owner: "octo-org", repo: "demo-repo" } },
-      createGitHubClients,
+      createGitHubSealAdapter,
       sealPullRequest,
     });
 
     expect(core.setSecret).toHaveBeenCalledWith("approve-token-value");
     expect(core.setSecret).toHaveBeenCalledWith("merge-token-value");
-    expect(createGitHubClients).toHaveBeenCalledWith({
+    expect(createGitHubSealAdapter).toHaveBeenCalledWith({
       approveToken: "approve-token-value",
       mergeToken: "merge-token-value",
     });
     expect(sealPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({ pullRequestNumber: 9, expectedAuthor: "app/changelog-bot" }),
-      clients,
+      github,
     );
     expect(core.setOutput).toHaveBeenCalledWith("pull-request-id", "PR_node_id");
     expect(core.setOutput).toHaveBeenCalledWith("head-sha", "abc123");
@@ -77,7 +77,7 @@ describe("run", () => {
     await run({
       core,
       context: { repo: { owner: "octo-org", repo: "demo-repo" } },
-      createGitHubClients: vi.fn(),
+      createGitHubSealAdapter: vi.fn(),
       sealPullRequest: vi.fn(),
     });
 
@@ -98,16 +98,16 @@ describe("run", () => {
       setOutput: vi.fn(),
       setFailed: vi.fn(),
     };
-    const clients = {
-      readClient: { rest: { pulls: { get: vi.fn(), listFiles: vi.fn() } }, paginate: vi.fn() },
-      approveGraphql: vi.fn(),
-      mergeGraphql: vi.fn(),
+    const github = {
+      fetchPullRequestSnapshot: vi.fn(),
+      approvePullRequest: vi.fn(),
+      enableAutoMerge: vi.fn(),
     };
 
     await run({
       core,
       context: { repo: { owner: "octo-org", repo: "demo-repo" } },
-      createGitHubClients: vi.fn(async () => clients),
+      createGitHubSealAdapter: vi.fn(async () => github),
       sealPullRequest: vi.fn(async () => {
         throw new Error("sealing failed");
       }),

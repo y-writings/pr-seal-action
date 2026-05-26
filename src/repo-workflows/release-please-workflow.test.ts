@@ -20,8 +20,8 @@ describe("release-please workflow", () => {
   it("creates the pull request creator GitHub App token", () => {
     expect(workflow).toContain("id: pr-creator-token");
     expect(workflow).toContain("actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2");
-    expect(workflow).toContain("app-id: ${{ vars.PULL_REQUEST_CREATOR_APP_ID }}");
-    expect(workflow).toContain("private-key: ${{ secrets.PULL_REQUEST_CREATOR_APP_PRIVATE_KEY }}");
+    expect(workflow).toContain("app-id: ${{ vars.PR_CREATOR_APP_ID }}");
+    expect(workflow).toContain("private-key: ${{ secrets.PR_CREATOR_APP_PRIVATE_KEY }}");
   });
 
   it("runs the pinned release-please action with manifest config", () => {

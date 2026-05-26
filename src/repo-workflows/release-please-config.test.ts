@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const releasePleaseConfig = JSON.parse(readFileSync("release-please-config.json", "utf8"));
 const releasePleaseManifest = JSON.parse(readFileSync(".release-please-manifest.json", "utf8"));
+const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 
 describe("release-please config", () => {
   it("uses node releases for the root package", () => {
@@ -19,7 +20,7 @@ describe("release-please config", () => {
     expect(releasePleaseConfig["skip-labeling"]).toBe(true);
   });
 
-  it("bootstraps the root package so the first feat release stays in the 0.1.x series", () => {
-    expect(releasePleaseManifest["."]).toBe("0.0.1");
+  it("tracks the released root package version", () => {
+    expect(releasePleaseManifest["."]).toBe(packageJson.version);
   });
 });
