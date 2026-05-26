@@ -1,34 +1,7 @@
-import type { MergeMethod } from "./inputs";
-import type { PullRequestDetails } from "./verify";
+import type { MergeMethod } from "../action/inputs";
+import type { PullRequestDetails } from "../pr-seal/verify";
 
-export type GraphqlClient = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
-
-export interface RestClient {
-  rest: {
-    pulls: {
-      get(params: { owner: string; repo: string; pull_number: number }): Promise<{ data: PullRequestRestData }>;
-      listFiles(params: {
-        owner: string;
-        repo: string;
-        pull_number: number;
-        per_page: number;
-      }): Promise<unknown>;
-    };
-  };
-  paginate(
-    endpoint: unknown,
-    params: Record<string, unknown>,
-    mapFn: (response: { data: Array<{ filename: string }> }) => string[],
-  ): Promise<string[]>;
-}
-
-interface PullRequestRestData {
-  node_id?: string | null;
-  number: number;
-  state: string;
-  user?: { login?: string | null } | null;
-  head?: { sha?: string | null } | null;
-}
+type GraphqlClient = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
 
 interface AddPullRequestReviewResponse {
   addPullRequestReview: {
@@ -66,57 +39,33 @@ export interface PullRequestSnapshot {
   changedFiles: string[];
 }
 
-export interface GitHubClients {
-  readClient: RestClient;
-  approveGraphql: GraphqlClient;
-  mergeGraphql: GraphqlClient;
+export interface GitHubSealAdapter {
+  fetchPullRequestSnapshot(owner: string, repo: string, pullNumber: number): Promise<PullRequestSnapshot>;
+  approvePullRequest(pullRequestId: string, headSha: string, body: string): Promise<string>;
+  enableAutoMerge(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
 }
 
-export async function createGitHubClients(tokens: { approveToken: string; mergeToken: string }): Promise<GitHubClients> {
+export async function createGitHubSealAdapter(tokens: {
+  approveToken: string;
+  mergeToken: string;
+}): Promise<GitHubSealAdapter> {
   const github = await import("@actions/github");
-  const readClient = github.getOctokit(tokens.mergeToken) as unknown as RestClient;
   const approveClient = github.getOctokit(tokens.approveToken);
   const mergeClient = github.getOctokit(tokens.mergeToken);
+  const approveGraphql = approveClient.graphql as GraphqlClient;
+  const mergeGraphql = mergeClient.graphql as GraphqlClient;
 
   return {
-    readClient,
-    approveGraphql: approveClient.graphql as GraphqlClient,
-    mergeGraphql: mergeClient.graphql as GraphqlClient,
+    fetchPullRequestSnapshot: (owner, repo, pullNumber) =>
+      fetchPullRequestSnapshot(mergeGraphql, owner, repo, pullNumber),
+    approvePullRequest: (pullRequestId, headSha, body) =>
+      approvePullRequest(approveGraphql, pullRequestId, headSha, body),
+    enableAutoMerge: (pullRequestId, headSha, mergeMethod) =>
+      enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
   };
 }
 
-export async function fetchPullRequest(
-  client: RestClient,
-  owner: string,
-  repo: string,
-  pullNumber: number,
-): Promise<PullRequestDetails> {
-  const response = await client.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-  const data = response.data;
-
-  return {
-    id: data.node_id ?? "",
-    number: data.number,
-    state: data.state,
-    authorLogin: data.user?.login ?? "",
-    headSha: data.head?.sha ?? "",
-  };
-}
-
-export async function fetchChangedFiles(
-  client: RestClient,
-  owner: string,
-  repo: string,
-  pullNumber: number,
-): Promise<string[]> {
-  return client.paginate(
-    client.rest.pulls.listFiles,
-    { owner, repo, pull_number: pullNumber, per_page: 100 },
-    (response) => response.data.map((file) => file.filename),
-  );
-}
-
-export async function fetchPullRequestSnapshot(
+async function fetchPullRequestSnapshot(
   graphql: GraphqlClient,
   owner: string,
   repo: string,
@@ -197,7 +146,7 @@ export async function fetchPullRequestSnapshot(
   return { pullRequest: pullRequest!, changedFiles };
 }
 
-export async function approvePullRequest(
+async function approvePullRequest(
   graphql: GraphqlClient,
   pullRequestId: string,
   headSha: string,
@@ -225,7 +174,7 @@ export async function approvePullRequest(
   return reviewId;
 }
 
-export async function enableAutoMerge(
+async function enableAutoMerge(
   graphql: GraphqlClient,
   pullRequestId: string,
   headSha: string,

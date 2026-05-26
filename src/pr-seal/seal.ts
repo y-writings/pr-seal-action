@@ -1,10 +1,5 @@
-import type { ActionInputs } from "./inputs";
-import {
-  approvePullRequest,
-  enableAutoMerge,
-  fetchPullRequestSnapshot,
-  type GitHubClients,
-} from "./github";
+import type { ActionInputs } from "../action/inputs";
+import type { GitHubSealAdapter } from "../github/seal-adapter";
 import { verifyPullRequestSafety } from "./verify";
 
 export interface SealResult {
@@ -15,9 +10,9 @@ export interface SealResult {
   autoMergeEnabled: boolean;
 }
 
-export async function sealPullRequest(inputs: ActionInputs, clients: GitHubClients): Promise<SealResult> {
+export async function sealPullRequest(inputs: ActionInputs, github: GitHubSealAdapter): Promise<SealResult> {
   const { owner, repo, value } = inputs.repository;
-  const snapshot = await fetchPullRequestSnapshot(clients.mergeGraphql, owner, repo, inputs.pullRequestNumber);
+  const snapshot = await github.fetchPullRequestSnapshot(owner, repo, inputs.pullRequestNumber);
   const verified = verifyPullRequestSafety(snapshot.pullRequest, snapshot.changedFiles, {
     repository: value,
     pullRequestNumber: inputs.pullRequestNumber,
@@ -25,8 +20,8 @@ export async function sealPullRequest(inputs: ActionInputs, clients: GitHubClien
     allowedPaths: inputs.allowedPaths,
   });
 
-  await approvePullRequest(clients.approveGraphql, verified.pullRequestId, verified.headSha, inputs.approveBody);
-  await enableAutoMerge(clients.mergeGraphql, verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+  await github.approvePullRequest(verified.pullRequestId, verified.headSha, inputs.approveBody);
+  await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
 
   return {
     pullRequestId: verified.pullRequestId,

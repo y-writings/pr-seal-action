@@ -2,41 +2,136 @@ require('./sourcemap-register.js');/******/ (() => { // webpackBootstrap
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 4171:
+/***/ 7884:
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_APPROVE_BODY = void 0;
+exports.parseInputs = parseInputs;
+exports.DEFAULT_APPROVE_BODY = "Automated approval by pr-seal-action after author and changed-file verification.";
+function parseInputs(reader, context) {
+    const repositoryValue = optionalInput(reader, "repository") || `${context.repo.owner}/${context.repo.repo}`;
+    return {
+        repository: parseRepository(repositoryValue),
+        pullRequestNumber: parsePositiveInteger(requiredInput(reader, "pull-request-number"), "pull-request-number"),
+        expectedAuthor: requiredInput(reader, "expected-author"),
+        allowedPaths: parseAllowedPaths(reader.getInput("allowed-paths", { required: true })),
+        approveToken: requiredInput(reader, "approve-token"),
+        mergeToken: requiredInput(reader, "merge-token"),
+        mergeMethod: parseMergeMethod(optionalInput(reader, "merge-method") || "squash"),
+        approveBody: optionalInput(reader, "approve-body") || exports.DEFAULT_APPROVE_BODY,
+    };
+}
+function requiredInput(reader, name) {
+    const value = reader.getInput(name, { required: true }).trim();
+    if (value.length === 0) {
+        throw new Error(`${name} is required`);
+    }
+    return value;
+}
+function optionalInput(reader, name) {
+    return reader.getInput(name).trim();
+}
+function parseRepository(value) {
+    const parts = value.split("/");
+    if (parts.length !== 2 || parts[0].length === 0 || parts[1].length === 0) {
+        throw new Error("repository must be in owner/name format");
+    }
+    return { owner: parts[0], repo: parts[1], value };
+}
+function parsePositiveInteger(value, name) {
+    if (!/^[1-9]\d*$/.test(value)) {
+        throw new Error(`${name} must be a positive integer`);
+    }
+    const numberValue = Number(value);
+    if (!Number.isSafeInteger(numberValue)) {
+        throw new Error(`${name} must be a positive safe integer`);
+    }
+    return numberValue;
+}
+function parseAllowedPaths(value) {
+    const paths = value
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    if (paths.length === 0) {
+        throw new Error("allowed-paths must include at least one path");
+    }
+    return paths;
+}
+function parseMergeMethod(value) {
+    const normalized = value.toLowerCase();
+    if (normalized === "squash" || normalized === "merge" || normalized === "rebase") {
+        return normalized;
+    }
+    throw new Error("merge-method must be one of squash, merge, or rebase");
+}
+
+
+/***/ }),
+
+/***/ 1180:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createGitHubClients = createGitHubClients;
-exports.fetchPullRequest = fetchPullRequest;
-exports.fetchChangedFiles = fetchChangedFiles;
-exports.fetchPullRequestSnapshot = fetchPullRequestSnapshot;
-exports.approvePullRequest = approvePullRequest;
-exports.enableAutoMerge = enableAutoMerge;
-async function createGitHubClients(tokens) {
+exports.run = run;
+const seal_adapter_1 = __nccwpck_require__(8369);
+const seal_1 = __nccwpck_require__(12);
+const inputs_1 = __nccwpck_require__(7884);
+async function run(dependencies) {
+    const resolvedDependencies = dependencies ?? (await createDefaultDependencies());
+    try {
+        const inputs = (0, inputs_1.parseInputs)(resolvedDependencies.core, resolvedDependencies.context);
+        resolvedDependencies.core.setSecret(inputs.approveToken);
+        resolvedDependencies.core.setSecret(inputs.mergeToken);
+        const github = await resolvedDependencies.createGitHubSealAdapter({
+            approveToken: inputs.approveToken,
+            mergeToken: inputs.mergeToken,
+        });
+        const result = await resolvedDependencies.sealPullRequest(inputs, github);
+        resolvedDependencies.core.setOutput("pull-request-id", result.pullRequestId);
+        resolvedDependencies.core.setOutput("head-sha", result.headSha);
+        resolvedDependencies.core.setOutput("changed-files", JSON.stringify(result.changedFiles));
+        resolvedDependencies.core.setOutput("approved", String(result.approved));
+        resolvedDependencies.core.setOutput("auto-merge-enabled", String(result.autoMergeEnabled));
+    }
+    catch (error) {
+        resolvedDependencies.core.setFailed(error instanceof Error ? error.message : String(error));
+    }
+}
+async function createDefaultDependencies() {
+    const core = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(335)]).then(__nccwpck_require__.bind(__nccwpck_require__, 6335));
     const github = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(358)]).then(__nccwpck_require__.bind(__nccwpck_require__, 7358));
-    const readClient = github.getOctokit(tokens.mergeToken);
+    return {
+        core,
+        context: github.context,
+        createGitHubSealAdapter: seal_adapter_1.createGitHubSealAdapter,
+        sealPullRequest: seal_1.sealPullRequest,
+    };
+}
+
+
+/***/ }),
+
+/***/ 8369:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createGitHubSealAdapter = createGitHubSealAdapter;
+async function createGitHubSealAdapter(tokens) {
+    const github = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(358)]).then(__nccwpck_require__.bind(__nccwpck_require__, 7358));
     const approveClient = github.getOctokit(tokens.approveToken);
     const mergeClient = github.getOctokit(tokens.mergeToken);
+    const approveGraphql = approveClient.graphql;
+    const mergeGraphql = mergeClient.graphql;
     return {
-        readClient,
-        approveGraphql: approveClient.graphql,
-        mergeGraphql: mergeClient.graphql,
+        fetchPullRequestSnapshot: (owner, repo, pullNumber) => fetchPullRequestSnapshot(mergeGraphql, owner, repo, pullNumber),
+        approvePullRequest: (pullRequestId, headSha, body) => approvePullRequest(approveGraphql, pullRequestId, headSha, body),
+        enableAutoMerge: (pullRequestId, headSha, mergeMethod) => enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
     };
-}
-async function fetchPullRequest(client, owner, repo, pullNumber) {
-    const response = await client.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-    const data = response.data;
-    return {
-        id: data.node_id ?? "",
-        number: data.number,
-        state: data.state,
-        authorLogin: data.user?.login ?? "",
-        headSha: data.head?.sha ?? "",
-    };
-}
-async function fetchChangedFiles(client, owner, repo, pullNumber) {
-    return client.paginate(client.rest.pulls.listFiles, { owner, repo, pull_number: pullNumber, per_page: 100 }, (response) => response.data.map((file) => file.filename));
 }
 async function fetchPullRequestSnapshot(graphql, owner, repo, pullNumber) {
     const changedFiles = [];
@@ -140,94 +235,24 @@ function toGraphqlMergeMethod(mergeMethod) {
 
 /***/ }),
 
-/***/ 6713:
-/***/ ((__unused_webpack_module, exports) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_APPROVE_BODY = void 0;
-exports.parseInputs = parseInputs;
-exports.DEFAULT_APPROVE_BODY = "Automated approval by pr-seal-action after author and changed-file verification.";
-function parseInputs(reader, context) {
-    const repositoryValue = optionalInput(reader, "repository") || `${context.repo.owner}/${context.repo.repo}`;
-    return {
-        repository: parseRepository(repositoryValue),
-        pullRequestNumber: parsePositiveInteger(requiredInput(reader, "pull-request-number"), "pull-request-number"),
-        expectedAuthor: requiredInput(reader, "expected-author"),
-        allowedPaths: parseAllowedPaths(reader.getInput("allowed-paths", { required: true })),
-        approveToken: requiredInput(reader, "approve-token"),
-        mergeToken: requiredInput(reader, "merge-token"),
-        mergeMethod: parseMergeMethod(optionalInput(reader, "merge-method") || "squash"),
-        approveBody: optionalInput(reader, "approve-body") || exports.DEFAULT_APPROVE_BODY,
-    };
-}
-function requiredInput(reader, name) {
-    const value = reader.getInput(name, { required: true }).trim();
-    if (value.length === 0) {
-        throw new Error(`${name} is required`);
-    }
-    return value;
-}
-function optionalInput(reader, name) {
-    return reader.getInput(name).trim();
-}
-function parseRepository(value) {
-    const parts = value.split("/");
-    if (parts.length !== 2 || parts[0].length === 0 || parts[1].length === 0) {
-        throw new Error("repository must be in owner/name format");
-    }
-    return { owner: parts[0], repo: parts[1], value };
-}
-function parsePositiveInteger(value, name) {
-    if (!/^[1-9]\d*$/.test(value)) {
-        throw new Error(`${name} must be a positive integer`);
-    }
-    const numberValue = Number(value);
-    if (!Number.isSafeInteger(numberValue)) {
-        throw new Error(`${name} must be a positive safe integer`);
-    }
-    return numberValue;
-}
-function parseAllowedPaths(value) {
-    const paths = value
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-    if (paths.length === 0) {
-        throw new Error("allowed-paths must include at least one path");
-    }
-    return paths;
-}
-function parseMergeMethod(value) {
-    const normalized = value.toLowerCase();
-    if (normalized === "squash" || normalized === "merge" || normalized === "rebase") {
-        return normalized;
-    }
-    throw new Error("merge-method must be one of squash, merge, or rebase");
-}
-
-
-/***/ }),
-
-/***/ 3169:
+/***/ 12:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.sealPullRequest = sealPullRequest;
-const github_1 = __nccwpck_require__(4171);
-const verify_1 = __nccwpck_require__(1237);
-async function sealPullRequest(inputs, clients) {
+const verify_1 = __nccwpck_require__(5896);
+async function sealPullRequest(inputs, github) {
     const { owner, repo, value } = inputs.repository;
-    const snapshot = await (0, github_1.fetchPullRequestSnapshot)(clients.mergeGraphql, owner, repo, inputs.pullRequestNumber);
+    const snapshot = await github.fetchPullRequestSnapshot(owner, repo, inputs.pullRequestNumber);
     const verified = (0, verify_1.verifyPullRequestSafety)(snapshot.pullRequest, snapshot.changedFiles, {
         repository: value,
         pullRequestNumber: inputs.pullRequestNumber,
         expectedAuthor: inputs.expectedAuthor,
         allowedPaths: inputs.allowedPaths,
     });
-    await (0, github_1.approvePullRequest)(clients.approveGraphql, verified.pullRequestId, verified.headSha, inputs.approveBody);
-    await (0, github_1.enableAutoMerge)(clients.mergeGraphql, verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+    await github.approvePullRequest(verified.pullRequestId, verified.headSha, inputs.approveBody);
+    await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
     return {
         pullRequestId: verified.pullRequestId,
         headSha: verified.headSha,
@@ -240,7 +265,7 @@ async function sealPullRequest(inputs, clients) {
 
 /***/ }),
 
-/***/ 1237:
+/***/ 5896:
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -685,43 +710,11 @@ var __webpack_exports__ = {};
 var exports = __webpack_exports__;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.run = run;
-const github_1 = __nccwpck_require__(4171);
-const inputs_1 = __nccwpck_require__(6713);
-const seal_1 = __nccwpck_require__(3169);
-async function run(dependencies) {
-    const resolvedDependencies = dependencies ?? (await createDefaultDependencies());
-    try {
-        const inputs = (0, inputs_1.parseInputs)(resolvedDependencies.core, resolvedDependencies.context);
-        resolvedDependencies.core.setSecret(inputs.approveToken);
-        resolvedDependencies.core.setSecret(inputs.mergeToken);
-        const clients = await resolvedDependencies.createGitHubClients({
-            approveToken: inputs.approveToken,
-            mergeToken: inputs.mergeToken,
-        });
-        const result = await resolvedDependencies.sealPullRequest(inputs, clients);
-        resolvedDependencies.core.setOutput("pull-request-id", result.pullRequestId);
-        resolvedDependencies.core.setOutput("head-sha", result.headSha);
-        resolvedDependencies.core.setOutput("changed-files", JSON.stringify(result.changedFiles));
-        resolvedDependencies.core.setOutput("approved", String(result.approved));
-        resolvedDependencies.core.setOutput("auto-merge-enabled", String(result.autoMergeEnabled));
-    }
-    catch (error) {
-        resolvedDependencies.core.setFailed(error instanceof Error ? error.message : String(error));
-    }
-}
-async function createDefaultDependencies() {
-    const core = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(335)]).then(__nccwpck_require__.bind(__nccwpck_require__, 6335));
-    const github = await Promise.all(/* import() */[__nccwpck_require__.e(682), __nccwpck_require__.e(358)]).then(__nccwpck_require__.bind(__nccwpck_require__, 7358));
-    return {
-        core,
-        context: github.context,
-        createGitHubClients: github_1.createGitHubClients,
-        sealPullRequest: seal_1.sealPullRequest,
-    };
-}
+exports.run = void 0;
+const run_1 = __nccwpck_require__(1180);
+Object.defineProperty(exports, "run", ({ enumerable: true, get: function () { return run_1.run; } }));
 if (require.main === require.cache[eval('__filename')]) {
-    void run();
+    void (0, run_1.run)();
 }
 
 })();

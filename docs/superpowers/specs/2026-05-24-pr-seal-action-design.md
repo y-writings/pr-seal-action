@@ -198,24 +198,26 @@ The action requires branch protection and repository auto-merge settings to be c
 
 ## Implementation Structure
 
-The initial repository currently has no root Node project, `src`, tests, or `action.yml`. The implementation will introduce a minimal TypeScript action project.
+The implementation is a minimal TypeScript action project with the runtime entrypoint kept separate from the PR seal domain modules and the GitHub adapter.
 
-Planned files:
+Current files:
 
 - `action.yml`: GitHub Action metadata, inputs, outputs, and `runs.using: node24` with `dist/index.js`.
 - `package.json`: scripts, runtime dependencies, development dependencies, and package metadata.
-- `package-lock.json`: locked dependency graph.
+- `pnpm-lock.yaml`: locked dependency graph.
 - `tsconfig.json`: TypeScript configuration for source and tests.
-- `src/main.ts`: entrypoint that wires inputs, GitHub clients, verification, approval, auto-merge, outputs, and top-level failure handling.
-- `src/inputs.ts`: input parsing and validation.
-- `src/github.ts`: GitHub API wrapper functions.
-- `src/verify.ts`: author and path verification helpers.
-- `src/seal.ts`: approval and auto-merge orchestration.
-- `src/*.test.ts`: unit tests for inputs, verification, pagination, failure ordering, and GraphQL payloads.
+- `src/main.ts`: thin bundled entrypoint.
+- `src/action/run.ts`: action wiring, secret masking, outputs, and top-level failure handling.
+- `src/action/inputs.ts`: input parsing and validation.
+- `src/pr-seal/verify.ts`: pull request safety checks.
+- `src/pr-seal/seal.ts`: verification, approval, and auto-merge orchestration.
+- `src/github/seal-adapter.ts`: GitHub GraphQL adapter for snapshot, approval, and auto-merge operations.
+- `src/repo-workflows/*.test.ts`: tests for this repository's release and changelog workflows.
+- `src/**/*.test.ts`: unit tests for inputs, verification, pagination, failure ordering, and GraphQL payloads.
 - `dist/index.js`: bundled action entrypoint committed for consumers.
 - `README.md`: usage, security contract, input/output reference, and workflow example.
 
-The implementation should keep module boundaries small, but avoid needless abstractions. The API wrapper boundary exists to make GitHub calls mockable and to keep security logic easy to test.
+The implementation should keep modules small, but avoid needless abstractions. The GitHub seal adapter seam exists to make GitHub calls mockable and to keep security logic easy to test.
 
 ## Testing Strategy
 
