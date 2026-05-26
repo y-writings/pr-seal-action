@@ -1,5 +1,9 @@
 # pr-seal-action
 
+<p align="center">
+  <img src="docs/assets/pr-seal-action-hero.jpg" alt="pr-seal-action illustration: pull request packages pass inspection and receive an OK seal" width="92%" />
+</p>
+
 `pr-seal-action` verifies that a pull request was created by an expected author and only changes allowed files, then seals it by approving it and enabling auto-merge with the verified head SHA.
 
 This action is for tightly scoped automation PRs such as generated changelog updates. It is not a general-purpose auto-approve action.
