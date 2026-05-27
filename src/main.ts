@@ -1,7 +1,3 @@
-import { run } from "./action/run";
+import { runAction } from "./action/run.js";
 
-export { run };
-
-if (require.main === module) {
-  void run();
-}
+void runAction();

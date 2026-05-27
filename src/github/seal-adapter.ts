@@ -1,5 +1,7 @@
-import type { MergeMethod } from "../action/inputs";
-import type { PullRequestDetails } from "../pr-seal/verify";
+import { getOctokit } from "@actions/github";
+
+import type { MergeMethod } from "../action/inputs.js";
+import type { PullRequestDetails } from "../pr-seal/verify.js";
 
 type GraphqlClient = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
 
@@ -45,13 +47,12 @@ export interface GitHubSealAdapter {
   enableAutoMerge(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
 }
 
-export async function createGitHubSealAdapter(tokens: {
+export function createGitHubSealAdapter(tokens: {
   approveToken: string;
   mergeToken: string;
-}): Promise<GitHubSealAdapter> {
-  const github = await import("@actions/github");
-  const approveClient = github.getOctokit(tokens.approveToken);
-  const mergeClient = github.getOctokit(tokens.mergeToken);
+}): GitHubSealAdapter {
+  const approveClient = getOctokit(tokens.approveToken);
+  const mergeClient = getOctokit(tokens.mergeToken);
   const approveGraphql = approveClient.graphql as GraphqlClient;
   const mergeGraphql = mergeClient.graphql as GraphqlClient;
 
