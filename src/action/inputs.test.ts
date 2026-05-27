@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_APPROVE_BODY, parseInputs } from "./inputs";
+import { DEFAULT_APPROVE_BODY, parseInputs } from "./inputs.js";
 
 type InputValues = Record<string, string | undefined>;
 

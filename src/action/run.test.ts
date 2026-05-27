@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { run } from "./run";
+import { run } from "./run.js";
 
 function inputReader(values: Record<string, string | undefined>) {
   return vi.fn((name: string, options?: { required?: boolean }) => {
@@ -32,7 +32,7 @@ describe("run", () => {
       approvePullRequest: vi.fn(),
       enableAutoMerge: vi.fn(),
     };
-    const createGitHubSealAdapter = vi.fn(async () => github);
+    const createGitHubSealAdapter = vi.fn(() => github);
     const sealPullRequest = vi.fn(async () => ({
       pullRequestId: "PR_node_id",
       headSha: "abc123",
@@ -107,7 +107,7 @@ describe("run", () => {
     await run({
       core,
       context: { repo: { owner: "octo-org", repo: "demo-repo" } },
-      createGitHubSealAdapter: vi.fn(async () => github),
+      createGitHubSealAdapter: vi.fn(() => github),
       sealPullRequest: vi.fn(async () => {
         throw new Error("sealing failed");
       }),

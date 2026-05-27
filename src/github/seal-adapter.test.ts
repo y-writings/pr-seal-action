@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGitHubSealAdapter } from "./seal-adapter";
+import { createGitHubSealAdapter } from "./seal-adapter.js";
 
 type GraphqlClient = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
 type GraphqlMock = ReturnType<typeof vi.fn<GraphqlClient>>;

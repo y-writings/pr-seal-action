@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { verifyPullRequestSafety } from "./verify";
+import { verifyPullRequestSafety } from "./verify.js";
 
 const basePullRequest = {
   id: "PR_node_id",

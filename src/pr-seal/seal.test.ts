@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ActionInputs } from "../action/inputs";
-import type { GitHubSealAdapter } from "../github/seal-adapter";
-import { sealPullRequest } from "./seal";
+import type { ActionInputs } from "../action/inputs.js";
+import type { GitHubSealAdapter } from "../github/seal-adapter.js";
+import { sealPullRequest } from "./seal.js";
 
 const inputs: ActionInputs = {
   repository: { owner: "octo-org", repo: "demo-repo", value: "octo-org/demo-repo" },

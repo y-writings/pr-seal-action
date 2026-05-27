@@ -1,6 +1,6 @@
-import type { ActionInputs } from "../action/inputs";
-import type { GitHubSealAdapter } from "../github/seal-adapter";
-import { verifyPullRequestSafety } from "./verify";
+import type { ActionInputs } from "../action/inputs.js";
+import type { GitHubSealAdapter } from "../github/seal-adapter.js";
+import { verifyPullRequestSafety } from "./verify.js";
 
 export interface SealResult {
   pullRequestId: string;
