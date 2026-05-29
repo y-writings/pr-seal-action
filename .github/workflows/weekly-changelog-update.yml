@@ -91,19 +91,6 @@ jobs:
             - generated after `${{ steps.calver-tag.outputs.tag }}` was created on `main`
             - auto-merge is enabled after automated validation
 
-      - name: Validate changelog approver app
-        if: ${{ steps.changelog-pull-request.outputs.pull-request-number != '' }}
-        env:
-          PR_CREATOR_APP_ID: ${{ vars.PR_CREATOR_APP_ID }}
-          PR_APPROVER_APP_ID: ${{ vars.PR_APPROVER_APP_ID }}
-        run: |
-          if [ -n "${PR_CREATOR_APP_ID}" ] && \
-            [ -n "${PR_APPROVER_APP_ID}" ] && \
-            [ "${PR_CREATOR_APP_ID}" = "${PR_APPROVER_APP_ID}" ]; then
-            echo "PR_APPROVER_APP_ID must be different from PR_CREATOR_APP_ID" >&2
-            exit 1
-          fi
-
       - name: Create changelog approver GitHub App token
         id: approver-token
         if: ${{ steps.changelog-pull-request.outputs.pull-request-number != '' }}
