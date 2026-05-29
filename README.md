@@ -79,6 +79,8 @@ Use separate tokens for approval and auto-merge when branch protection requires 
 - `approve-token` should belong to the approver actor and have permission to create pull request reviews.
 - `merge-token` should belong to the PR creator or merge actor and have permission to read the PR and enable auto-merge.
 
+The approver actor must differ from the pull request author. When that condition is satisfied, `approve-token` and `merge-token` may be the same token. Use separate tokens if you want to keep the approver token at the minimum permissions needed only for approval.
+
 Do not use broad organization-wide credentials when a repository-scoped GitHub App token is sufficient.
 
 ## Security Notes
