@@ -1,32 +1,24 @@
-## [weekly-2026.05.25] - 2026-05-24
+## [weekly-2026.06.01] - 2026-05-29
 
-### 🐛 Bug Fixes
+### 🚜 Refactor
 
-- Bootstrap release please from 0.0.1 (#15)
+- [codex] improve pr seal architecture (#19)
+- Use native ESM action runtime (#20)
 
 ### 📚 Documentation
 
-- *(changelog)* Update changelog (#9)
-- Configure agent skills (#11)
+- [codex] Add README hero image (#18)
 
 ### ⚙️ Miscellaneous Tasks
 
-- Rename weekly merged PRs output (#10)
-- Rename to `WEEKLY_MERGED_PULL_REQUESTS.md` (#12)
-- Add release please automation (#13)
-## [2026.05.24] - 2026-05-24
+- Align GitHub App environment variables (#17)
+- [codex] remove redundant changelog approver validation (#21)
+## [0.1.0] - 2026-05-26
 
-### 🚀 Features
+### 📚 Documentation
 
-- Implement pr seal action (#1)
-
-### 🐛 Bug Fixes
-
-- Handle initial changelog range (#4)
-- Use changelog app author login (#6)
+- *(changelog)* Update changelog (#16)
 
 ### ⚙️ Miscellaneous Tasks
 
-- Switch package manager to pnpm (#2)
-- Add weekly changelog update workflow (#3)
-- Add CodeQL workflow (#8)
+- *(main)* Release 0.1.0 (#14)
