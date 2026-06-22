@@ -1,5 +1,5 @@
-## [weekly-2026.06.15] - 2026-06-08
+## [weekly-2026.06.22] - 2026-06-15
 
 ### 📚 Documentation
 
-- *(changelog)* Update changelog (#23)
+- *(changelog)* Update changelog (#24)
