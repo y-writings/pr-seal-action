@@ -1,11 +1,11 @@
 # pr-seal-action
 
-This context describes the action that verifies a tightly scoped automation pull request, approves it, and enables auto-merge against the verified head SHA.
+This context describes the action that verifies a tightly scoped automation pull request, approves it, and then enables auto-merge or merges directly against the verified head SHA.
 
 ## Language
 
 **PR seal**:
-The guarded flow that verifies an automation pull request, creates an approval review, and enables auto-merge for the same verified head SHA.
+The guarded flow that verifies an automation pull request, creates an approval review, and seals the same verified head SHA by enabling auto-merge or directly merging an already-clean pull request.
 _Avoid_: auto-approve flow, merge helper
 
 **Verified pull request**:
@@ -13,7 +13,7 @@ A pull request whose open state, number, author, changed paths, node ID, and hea
 _Avoid_: safe PR, valid PR
 
 **GitHub seal adapter**:
-The GitHub-backed module that fetches pull request evidence, creates the approval review, and enables auto-merge.
+The GitHub-backed module that fetches pull request evidence, creates the approval review, enables auto-merge, and directly merges already-clean pull requests.
 _Avoid_: GitHub client bundle, raw GraphQL client
 
 **Workflow check**:

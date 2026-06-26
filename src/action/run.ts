@@ -59,6 +59,7 @@ export async function run(dependencies: RunDependencies): Promise<void> {
       "auto-merge-enabled",
       String(result.autoMergeEnabled),
     );
+    dependencies.core.setOutput("merged", String(result.merged));
   } catch (error) {
     dependencies.core.setFailed(
       error instanceof Error ? error.message : String(error),
