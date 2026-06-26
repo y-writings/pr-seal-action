@@ -36372,6 +36372,7 @@ function createGitHubSealAdapter(tokens) {
         fetchPullRequestSnapshot: (owner, repo, pullNumber) => fetchPullRequestSnapshot(mergeGraphql, owner, repo, pullNumber),
         approvePullRequest: (pullRequestId, headSha, body) => approvePullRequest(approveGraphql, pullRequestId, headSha, body),
         enableAutoMerge: (pullRequestId, headSha, mergeMethod) => enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
+        mergePullRequest: (pullRequestId, headSha, mergeMethod) => mergePullRequest(mergeGraphql, pullRequestId, headSha, mergeMethod),
     };
 }
 async function fetchPullRequestSnapshot(graphql, owner, repo, pullNumber) {
@@ -36463,6 +36464,20 @@ async function enableAutoMerge(graphql, pullRequestId, headSha, mergeMethod) {
         throw new Error("GitHub did not return an auto-merge pull request ID");
     }
 }
+async function mergePullRequest(graphql, pullRequestId, headSha, mergeMethod) {
+    const response = (await graphql(`mutation($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) {
+      mergePullRequest(input: {
+        pullRequestId: $pullRequestId,
+        expectedHeadOid: $expectedHeadOid,
+        mergeMethod: $mergeMethod
+      }) {
+        pullRequest { id }
+      }
+    }`, { pullRequestId, expectedHeadOid: headSha, mergeMethod: toGraphqlMergeMethod(mergeMethod) }));
+    if (!response.mergePullRequest.pullRequest?.id) {
+        throw new Error("GitHub did not return a merged pull request ID");
+    }
+}
 function toGraphqlMergeMethod(mergeMethod) {
     if (mergeMethod === "squash") {
         return "SQUASH";
@@ -36515,14 +36530,31 @@ async function sealPullRequest(inputs, github) {
         allowedPaths: inputs.allowedPaths,
     });
     await github.approvePullRequest(verified.pullRequestId, verified.headSha, inputs.approveBody);
-    await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+    let autoMergeEnabled = false;
+    let merged = false;
+    try {
+        await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+        autoMergeEnabled = true;
+    }
+    catch (error) {
+        if (!isCleanPullRequestAutoMergeError(error)) {
+            throw error;
+        }
+        await github.mergePullRequest(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+        autoMergeEnabled = false;
+        merged = true;
+    }
     return {
         pullRequestId: verified.pullRequestId,
         headSha: verified.headSha,
         changedFiles: verified.changedFiles,
         approved: true,
-        autoMergeEnabled: true,
+        autoMergeEnabled,
+        merged,
     };
+}
+function isCleanPullRequestAutoMergeError(error) {
+    return error instanceof Error && error.message.includes("Pull request is in clean status");
 }
 
 ;// CONCATENATED MODULE: ./src/action/inputs.ts
@@ -36606,6 +36638,7 @@ async function run(dependencies) {
         dependencies.core.setOutput("changed-files", JSON.stringify(result.changedFiles));
         dependencies.core.setOutput("approved", String(result.approved));
         dependencies.core.setOutput("auto-merge-enabled", String(result.autoMergeEnabled));
+        dependencies.core.setOutput("merged", String(result.merged));
     }
     catch (error) {
         dependencies.core.setFailed(error instanceof Error ? error.message : String(error));

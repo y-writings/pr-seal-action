@@ -31,6 +31,7 @@ describe("run", () => {
       fetchPullRequestSnapshot: vi.fn(),
       approvePullRequest: vi.fn(),
       enableAutoMerge: vi.fn(),
+      mergePullRequest: vi.fn(),
     };
     const createGitHubSealAdapter = vi.fn(() => github);
     const sealPullRequest = vi.fn(async () => ({
@@ -39,6 +40,7 @@ describe("run", () => {
       changedFiles: ["CHANGELOG.md"],
       approved: true,
       autoMergeEnabled: true,
+      merged: false,
     }));
 
     await run({
@@ -63,6 +65,7 @@ describe("run", () => {
     expect(core.setOutput).toHaveBeenCalledWith("changed-files", "[\"CHANGELOG.md\"]");
     expect(core.setOutput).toHaveBeenCalledWith("approved", "true");
     expect(core.setOutput).toHaveBeenCalledWith("auto-merge-enabled", "true");
+    expect(core.setOutput).toHaveBeenCalledWith("merged", "false");
     expect(core.setFailed).not.toHaveBeenCalled();
   });
 
@@ -102,6 +105,7 @@ describe("run", () => {
       fetchPullRequestSnapshot: vi.fn(),
       approvePullRequest: vi.fn(),
       enableAutoMerge: vi.fn(),
+      mergePullRequest: vi.fn(),
     };
 
     await run({

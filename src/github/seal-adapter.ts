@@ -17,6 +17,12 @@ interface EnablePullRequestAutoMergeResponse {
   };
 }
 
+interface MergePullRequestResponse {
+  mergePullRequest: {
+    pullRequest: { id: string } | null;
+  };
+}
+
 interface PullRequestSnapshotResponse {
   repository: {
     pullRequest: {
@@ -45,6 +51,7 @@ export interface GitHubSealAdapter {
   fetchPullRequestSnapshot(owner: string, repo: string, pullNumber: number): Promise<PullRequestSnapshot>;
   approvePullRequest(pullRequestId: string, headSha: string, body: string): Promise<string>;
   enableAutoMerge(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
+  mergePullRequest(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
 }
 
 export function createGitHubSealAdapter(tokens: {
@@ -63,6 +70,8 @@ export function createGitHubSealAdapter(tokens: {
       approvePullRequest(approveGraphql, pullRequestId, headSha, body),
     enableAutoMerge: (pullRequestId, headSha, mergeMethod) =>
       enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
+    mergePullRequest: (pullRequestId, headSha, mergeMethod) =>
+      mergePullRequest(mergeGraphql, pullRequestId, headSha, mergeMethod),
   };
 }
 
@@ -196,6 +205,30 @@ async function enableAutoMerge(
 
   if (!response.enablePullRequestAutoMerge.pullRequest?.id) {
     throw new Error("GitHub did not return an auto-merge pull request ID");
+  }
+}
+
+async function mergePullRequest(
+  graphql: GraphqlClient,
+  pullRequestId: string,
+  headSha: string,
+  mergeMethod: MergeMethod,
+): Promise<void> {
+  const response = (await graphql(
+    `mutation($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) {
+      mergePullRequest(input: {
+        pullRequestId: $pullRequestId,
+        expectedHeadOid: $expectedHeadOid,
+        mergeMethod: $mergeMethod
+      }) {
+        pullRequest { id }
+      }
+    }`,
+    { pullRequestId, expectedHeadOid: headSha, mergeMethod: toGraphqlMergeMethod(mergeMethod) },
+  )) as MergePullRequestResponse;
+
+  if (!response.mergePullRequest.pullRequest?.id) {
+    throw new Error("GitHub did not return a merged pull request ID");
   }
 }
 

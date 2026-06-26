@@ -8,6 +8,7 @@ export interface SealResult {
   changedFiles: string[];
   approved: boolean;
   autoMergeEnabled: boolean;
+  merged: boolean;
 }
 
 export async function sealPullRequest(inputs: ActionInputs, github: GitHubSealAdapter): Promise<SealResult> {
@@ -21,13 +22,31 @@ export async function sealPullRequest(inputs: ActionInputs, github: GitHubSealAd
   });
 
   await github.approvePullRequest(verified.pullRequestId, verified.headSha, inputs.approveBody);
-  await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+
+  let autoMergeEnabled = false;
+  let merged = false;
+  try {
+    await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+    autoMergeEnabled = true;
+  } catch (error) {
+    if (!isCleanPullRequestAutoMergeError(error)) {
+      throw error;
+    }
+    await github.mergePullRequest(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+    autoMergeEnabled = false;
+    merged = true;
+  }
 
   return {
     pullRequestId: verified.pullRequestId,
     headSha: verified.headSha,
     changedFiles: verified.changedFiles,
     approved: true,
-    autoMergeEnabled: true,
+    autoMergeEnabled,
+    merged,
   };
+}
+
+function isCleanPullRequestAutoMergeError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Pull request is in clean status");
 }

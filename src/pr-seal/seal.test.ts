@@ -21,6 +21,7 @@ function dependencies(overrides?: {
   fetchPullRequestSnapshot?: ReturnType<typeof vi.fn<GitHubSealAdapter["fetchPullRequestSnapshot"]>>;
   approvePullRequest?: ReturnType<typeof vi.fn<GitHubSealAdapter["approvePullRequest"]>>;
   enableAutoMerge?: ReturnType<typeof vi.fn<GitHubSealAdapter["enableAutoMerge"]>>;
+  mergePullRequest?: ReturnType<typeof vi.fn<GitHubSealAdapter["mergePullRequest"]>>;
 }) {
   return {
     fetchPullRequestSnapshot:
@@ -41,6 +42,9 @@ function dependencies(overrides?: {
     enableAutoMerge:
       overrides?.enableAutoMerge ??
       vi.fn<GitHubSealAdapter["enableAutoMerge"]>(async () => undefined),
+    mergePullRequest:
+      overrides?.mergePullRequest ??
+      vi.fn<GitHubSealAdapter["mergePullRequest"]>(async () => undefined),
   };
 }
 
@@ -60,13 +64,41 @@ describe("sealPullRequest", () => {
       changedFiles: ["CHANGELOG.md"],
       approved: true,
       autoMergeEnabled: true,
+      merged: false,
     });
 
     expect(github.fetchPullRequestSnapshot).toHaveBeenCalledWith("octo-org", "demo-repo", 9);
     expect(github.approvePullRequest).toHaveBeenCalledWith("PR_node_id", "abc123", "Verified.");
     expect(github.enableAutoMerge).toHaveBeenCalledWith("PR_node_id", "abc123", "squash");
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
     expect(github.approvePullRequest.mock.invocationCallOrder[0]).toBeLessThan(
       github.enableAutoMerge.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("directly merges the verified head when GitHub reports the pull request is already clean", async () => {
+    const enableAutoMerge = vi.fn<GitHubSealAdapter["enableAutoMerge"]>(async () => {
+      throw new Error(
+        "Request failed due to following response errors:\n - Pull request Pull request is in clean status",
+      );
+    });
+    const mergePullRequest = vi.fn<GitHubSealAdapter["mergePullRequest"]>(async () => undefined);
+    const github = dependencies({ enableAutoMerge, mergePullRequest });
+
+    await expect(sealPullRequest(inputs, github)).resolves.toEqual({
+      pullRequestId: "PR_node_id",
+      headSha: "abc123",
+      changedFiles: ["CHANGELOG.md"],
+      approved: true,
+      autoMergeEnabled: false,
+      merged: true,
+    });
+
+    expect(github.approvePullRequest).toHaveBeenCalledWith("PR_node_id", "abc123", "Verified.");
+    expect(github.enableAutoMerge).toHaveBeenCalledWith("PR_node_id", "abc123", "squash");
+    expect(github.mergePullRequest).toHaveBeenCalledWith("PR_node_id", "abc123", "squash");
+    expect(github.enableAutoMerge.mock.invocationCallOrder[0]).toBeLessThan(
+      github.mergePullRequest.mock.invocationCallOrder[0]!,
     );
   });
 
@@ -82,6 +114,7 @@ describe("sealPullRequest", () => {
     );
     expect(github.approvePullRequest).not.toHaveBeenCalled();
     expect(github.enableAutoMerge).not.toHaveBeenCalled();
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
   });
 
   it("does not approve or enable auto-merge when author verification fails", async () => {
@@ -90,6 +123,7 @@ describe("sealPullRequest", () => {
     await expect(sealPullRequest(inputs, github)).rejects.toThrow("PR author is app/other-bot");
     expect(github.approvePullRequest).not.toHaveBeenCalled();
     expect(github.enableAutoMerge).not.toHaveBeenCalled();
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
   });
 
   it("does not approve or enable auto-merge when changed files are unsafe", async () => {
@@ -98,6 +132,7 @@ describe("sealPullRequest", () => {
     await expect(sealPullRequest(inputs, github)).rejects.toThrow("disallowed paths: package.json");
     expect(github.approvePullRequest).not.toHaveBeenCalled();
     expect(github.enableAutoMerge).not.toHaveBeenCalled();
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
   });
 
   it("does not enable auto-merge when approval fails", async () => {
@@ -108,5 +143,6 @@ describe("sealPullRequest", () => {
 
     await expect(sealPullRequest(inputs, github)).rejects.toThrow("approval rejected");
     expect(github.enableAutoMerge).not.toHaveBeenCalled();
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
   });
 });

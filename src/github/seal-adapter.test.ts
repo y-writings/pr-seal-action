@@ -73,6 +73,7 @@ describe("createGitHubSealAdapter", () => {
       fetchPullRequestSnapshot: expect.any(Function),
       approvePullRequest: expect.any(Function),
       enableAutoMerge: expect.any(Function),
+      mergePullRequest: expect.any(Function),
     });
   });
 
@@ -239,6 +240,33 @@ describe("createGitHubSealAdapter", () => {
 
     await expect(adapter.enableAutoMerge("PR_node_id", "abc123", "squash")).rejects.toThrow(
       "GitHub did not return an auto-merge pull request ID",
+    );
+  });
+
+  it("merges a pull request with expectedHeadOid and an uppercase GraphQL merge method", async () => {
+    const mergeGraphql = vi.fn<GraphqlClient>(async () => ({
+      mergePullRequest: { pullRequest: { id: "PR_node_id" } },
+    }));
+    const { adapter } = await createAdapter({ mergeGraphql });
+
+    await adapter.mergePullRequest("PR_node_id", "abc123", "squash");
+
+    expect(mergeGraphql).toHaveBeenCalledWith(expect.stringContaining("mergePullRequest"), {
+      pullRequestId: "PR_node_id",
+      expectedHeadOid: "abc123",
+      mergeMethod: "SQUASH",
+    });
+    expect(mergeGraphql.mock.calls[0]?.[0]).toContain("expectedHeadOid: $expectedHeadOid");
+  });
+
+  it("fails when GitHub does not return a merged pull request ID", async () => {
+    const mergeGraphql = vi.fn<GraphqlClient>(async () => ({
+      mergePullRequest: { pullRequest: null },
+    }));
+    const { adapter } = await createAdapter({ mergeGraphql });
+
+    await expect(adapter.mergePullRequest("PR_node_id", "abc123", "squash")).rejects.toThrow(
+      "GitHub did not return a merged pull request ID",
     );
   });
 });

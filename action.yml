@@ -1,5 +1,5 @@
 name: pr-seal-action
-description: Verify an expected-author pull request, approve it, and enable auto-merge with the verified head SHA.
+description: Verify an expected-author pull request, approve it, and enable auto-merge or merge it with the verified head SHA.
 author: y-writings
 
 inputs:
@@ -7,7 +7,7 @@ inputs:
     description: Repository in owner/name format. Defaults to the current workflow repository.
     required: false
   pull-request-number:
-    description: Pull request number to verify, approve, and enable auto-merge for.
+    description: Pull request number to verify, approve, and enable auto-merge or merge.
     required: true
   expected-author:
     description: Exact GitHub login expected for the pull request author.
@@ -19,10 +19,10 @@ inputs:
     description: Token used only to create the approval review.
     required: true
   merge-token:
-    description: Token used to read the pull request and enable auto-merge.
+    description: Token used to read the pull request, enable auto-merge, or merge the pull request.
     required: true
   merge-method:
-    description: Auto-merge method. One of squash, merge, or rebase.
+    description: Merge method. One of squash, merge, or rebase.
     required: false
     default: squash
   approve-body:
@@ -40,6 +40,8 @@ outputs:
     description: Whether an approval review was created.
   auto-merge-enabled:
     description: Whether auto-merge was enabled.
+  merged:
+    description: Whether the pull request was merged directly because GitHub reported it was already clean.
 
 runs:
   using: node24
