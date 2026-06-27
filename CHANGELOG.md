@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/y-writings/pr-seal-action/compare/v0.1.0...v0.1.1) (2026-06-26)
+
+
+### Bug Fixes
+
+* merge clean sealed PRs directly ([#27](https://github.com/y-writings/pr-seal-action/issues/27)) ([776c1f9](https://github.com/y-writings/pr-seal-action/commit/776c1f909fc05eec42ccc3918e58abc9da5b654c))
+
 ## [0.1.0](https://github.com/y-writings/pr-seal-action/compare/v0.0.1...v0.1.0) (2026-05-25)
 
 

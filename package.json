@@ -1,6 +1,6 @@
 {
   "name": "pr-seal-action",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Verify, approve, and enable auto-merge for tightly-scoped pull requests.",
