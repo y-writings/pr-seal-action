@@ -33,12 +33,18 @@ describe("parseInputs", () => {
     expect(inputs).toEqual({
       repository: { owner: "octo-org", repo: "demo-repo", value: "octo-org/demo-repo" },
       pullRequestNumber: 42,
-      expectedAuthor: "app/changelog-bot",
+      expectedAuthors: ["app/changelog-bot"],
       allowedPaths: ["CHANGELOG.md"],
+      allowedPatterns: [],
+      deniedPatterns: [],
+      pathPreset: "none",
+      requireRegularFiles: false,
       approveToken: "approve-token-value",
       mergeToken: "merge-token-value",
       mergeMethod: "squash",
       approveBody: DEFAULT_APPROVE_BODY,
+      autoMerge: true,
+      onIneligible: "fail",
     });
   });
 
@@ -65,6 +71,8 @@ describe("parseInputs", () => {
     expect(inputs.allowedPaths).toEqual(["CHANGELOG.md", "docs/releases.md"]);
     expect(inputs.mergeMethod).toBe("rebase");
     expect(inputs.approveBody).toBe("Verified automated release PR.");
+    expect(inputs.autoMerge).toBe(true);
+    expect(inputs.onIneligible).toBe("fail");
   });
 
   it("rejects repository values that are not owner/name", () => {
@@ -126,6 +134,107 @@ describe("parseInputs", () => {
         context,
       ),
     ).toThrow("allowed-paths must include at least one path");
+  });
+
+  it("parses docs and config approval without an author or auto-merge", () => {
+    const inputs = parseInputs(
+      inputReader({
+        "pull-request-number": "9",
+        "require-expected-author": "false",
+        "allowed-patterns": "**/*.md\n",
+        "denied-patterns": "docs/private/**",
+        "path-preset": "docs-and-config",
+        "require-regular-files": "false",
+        "auto-merge": "false",
+        "on-ineligible": "skip",
+        "approve-token": "approve-token-value",
+        "merge-token": "merge-token-value",
+      }),
+      context,
+    );
+
+    expect(inputs.expectedAuthors).toEqual([]);
+    expect(inputs.allowedPaths).toEqual([]);
+    expect(inputs.allowedPatterns).toEqual(["**/*.md"]);
+    expect(inputs.deniedPatterns).toEqual(["docs/private/**"]);
+    expect(inputs.pathPreset).toBe("docs-and-config");
+    expect(inputs.requireRegularFiles).toBe(true);
+    expect(inputs.autoMerge).toBe(false);
+    expect(inputs.onIneligible).toBe("skip");
+  });
+
+  it("accepts several authors and still enforces an author that was provided", () => {
+    const inputs = parseInputs(
+      inputReader({
+        "pull-request-number": "9",
+        "require-expected-author": "false",
+        "expected-author": "octocat",
+        "expected-authors": "app/changelog-bot\n\noctocat\n",
+        "allowed-paths": "CHANGELOG.md",
+        "approve-token": "approve-token-value",
+        "merge-token": "merge-token-value",
+      }),
+      context,
+    );
+
+    expect(inputs.expectedAuthors).toEqual(["octocat", "app/changelog-bot"]);
+  });
+
+  it("keeps expected-author required for the existing caller shape", () => {
+    expect(() =>
+      parseInputs(
+        inputReader({
+          "pull-request-number": "1",
+          "allowed-paths": "CHANGELOG.md",
+          "approve-token": "approve-token-value",
+          "merge-token": "merge-token-value",
+        }),
+        context,
+      ),
+    ).toThrow("Input required and not supplied: expected-author");
+  });
+
+  it("rejects invalid patterns, presets, and mode switches", () => {
+    expect(() =>
+      parseInputs(
+        inputReader({
+          "pull-request-number": "1",
+          "expected-author": "app/changelog-bot",
+          "allowed-patterns": "../secret.md",
+          "approve-token": "approve-token-value",
+          "merge-token": "merge-token-value",
+        }),
+        context,
+      ),
+    ).toThrow("allowed-patterns contains an invalid pattern");
+
+    expect(() =>
+      parseInputs(
+        inputReader({
+          "pull-request-number": "1",
+          "expected-author": "app/changelog-bot",
+          "allowed-paths": "CHANGELOG.md",
+          "path-preset": "everything",
+          "approve-token": "approve-token-value",
+          "merge-token": "merge-token-value",
+        }),
+        context,
+      ),
+    ).toThrow("path-preset must be docs-and-config or none");
+
+    expect(() =>
+      parseInputs(
+        inputReader({
+          "pull-request-number": "1",
+          "expected-author": "app/changelog-bot",
+          "allowed-paths": "CHANGELOG.md",
+          "on-ineligible": "warn",
+          "approve-token": "approve-token-value",
+          "merge-token": "merge-token-value",
+        }),
+        context,
+      ),
+    ).toThrow("on-ineligible must be fail or skip");
   });
 
   it("rejects unsupported merge methods", () => {

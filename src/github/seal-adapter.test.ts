@@ -45,6 +45,7 @@ function snapshotResponse(overrides?: {
         state: "OPEN",
         author: { login: "app/changelog-bot" },
         headRefOid: overrides?.headSha ?? "abc123",
+        baseRefOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         files: {
           nodes:
             overrides && "files" in overrides
@@ -71,7 +72,10 @@ describe("createGitHubSealAdapter", () => {
     expect(githubMock.getOctokit).toHaveBeenNthCalledWith(2, "merge-token");
     expect(adapter).toEqual({
       fetchPullRequestSnapshot: expect.any(Function),
+      fetchPullRequestRefs: expect.any(Function),
+      fetchFileModes: expect.any(Function),
       approvePullRequest: expect.any(Function),
+      dismissPullRequestReview: expect.any(Function),
       enableAutoMerge: expect.any(Function),
       mergePullRequest: expect.any(Function),
     });
@@ -88,8 +92,13 @@ describe("createGitHubSealAdapter", () => {
         state: "open",
         authorLogin: "app/changelog-bot",
         headSha: "abc123",
+        baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       },
       changedFiles: ["CHANGELOG.md", "docs/releases.md"],
+      files: [
+        { path: "CHANGELOG.md", changeType: "MODIFIED" },
+        { path: "docs/releases.md", changeType: "ADDED" },
+      ],
     });
 
     expect(mergeGraphql).toHaveBeenCalledWith(expect.stringContaining("pullRequest(number: $pullNumber)"), {
@@ -158,14 +167,47 @@ describe("createGitHubSealAdapter", () => {
     );
   });
 
-  it("rejects a renamed changed file because the previous path cannot be safely verified", async () => {
+  it("returns a renamed file so verification can refuse it without losing the path", async () => {
     const mergeGraphql = vi.fn<GraphqlClient>(async () =>
       snapshotResponse({ files: [{ path: "CHANGELOG.md", changeType: "RENAMED" }] }),
     );
     const { adapter } = await createAdapter({ mergeGraphql });
 
+    await expect(adapter.fetchPullRequestSnapshot("octo-org", "demo-repo", 9)).resolves.toMatchObject({
+      files: [{ path: "CHANGELOG.md", changeType: "RENAMED" }],
+    });
+  });
+
+  it("rejects when pagination observes multiple base SHAs", async () => {
+    const mergeGraphql = vi
+      .fn<GraphqlClient>()
+      .mockResolvedValueOnce(
+        snapshotResponse({
+          files: [{ path: "CHANGELOG.md", changeType: "MODIFIED" }],
+          hasNextPage: true,
+          endCursor: "cursor-1",
+        }),
+      )
+      .mockResolvedValueOnce({
+        repository: {
+          pullRequest: {
+            id: "PR_node_id",
+            number: 9,
+            state: "OPEN",
+            author: { login: "app/changelog-bot" },
+            headRefOid: "abc123",
+            baseRefOid: "cccccccccccccccccccccccccccccccccccccccc",
+            files: {
+              nodes: [{ path: "docs/releases.md", changeType: "ADDED" }],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        },
+      });
+    const { adapter } = await createAdapter({ mergeGraphql });
+
     await expect(adapter.fetchPullRequestSnapshot("octo-org", "demo-repo", 9)).rejects.toThrow(
-      "Refusing to seal octo-org/demo-repo#9 because renamed files cannot be safely verified: CHANGELOG.md",
+      "Refusing to seal octo-org/demo-repo#9 because changed file pagination observed multiple base SHAs: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccccccccccccccccccccc",
     );
   });
 
@@ -185,6 +227,86 @@ describe("createGitHubSealAdapter", () => {
     await expect(adapter.fetchPullRequestSnapshot("octo-org", "demo-repo", 9)).rejects.toThrow(
       "GitHub returned an incomplete changed-file node for octo-org/demo-repo#9",
     );
+  });
+
+  it("reads pinned refs and tree modes, and dismisses a review with the approver token", async () => {
+    const headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const baseSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const approveGraphql = vi.fn<GraphqlClient>(async () => ({
+      dismissPullRequestReview: { pullRequestReview: { id: "review_id" } },
+    }));
+    const mergeGraphql = vi.fn<GraphqlClient>(async (query: string, variables: Record<string, unknown>) => {
+      if (query.includes("headRefOid") && !query.includes("files(")) {
+        return {
+          repository: {
+            pullRequest: { state: "OPEN", headRefOid: headSha, baseRefOid: baseSha },
+          },
+        };
+      }
+      const entries =
+        variables.expression === `${headSha}:docs`
+          ? [{ name: "guide.md", mode: 33188, type: "blob" }]
+          : variables.expression === `${baseSha}:`
+            ? [{ name: "README.md", mode: 33261, type: "blob" }]
+            : [{ name: "README.md", mode: 33188, type: "blob" }];
+      return { repository: { object: { __typename: "Tree", entries } } };
+    });
+    const { adapter } = await createAdapter({ approveGraphql, mergeGraphql });
+
+    await expect(adapter.fetchPullRequestRefs("octo-org", "demo-repo", 9)).resolves.toEqual({
+      state: "open",
+      headSha,
+      baseSha,
+    });
+    await expect(
+      adapter.fetchFileModes("octo-org", "demo-repo", headSha, baseSha, [
+        { path: "README.md", changeType: "MODIFIED" },
+        { path: "docs/guide.md", changeType: "ADDED" },
+      ]),
+    ).resolves.toEqual([
+      {
+        path: "README.md",
+        changeType: "MODIFIED",
+        head: { mode: 33188, type: "blob" },
+        base: { mode: 33261, type: "blob" },
+      },
+      {
+        path: "docs/guide.md",
+        changeType: "ADDED",
+        head: { mode: 33188, type: "blob" },
+        base: null,
+      },
+    ]);
+    expect(mergeGraphql).toHaveBeenCalledWith(expect.stringContaining("object(expression: $expression)"), {
+      owner: "octo-org",
+      repo: "demo-repo",
+      expression: `${headSha}:docs`,
+    });
+
+    await adapter.dismissPullRequestReview("review_id", "stale");
+    expect(approveGraphql).toHaveBeenCalledWith(expect.stringContaining("dismissPullRequestReview"), {
+      reviewId: "review_id",
+      message: "stale",
+    });
+  });
+
+  it("fails closed when a required git entry is missing or the commit SHA is not usable", async () => {
+    const mergeGraphql = vi.fn<GraphqlClient>(async () => ({
+      repository: { object: { __typename: "Tree", entries: [] } },
+    }));
+    const { adapter } = await createAdapter({ mergeGraphql });
+    const headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const baseSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    await expect(
+      adapter.fetchFileModes("octo-org", "demo-repo", headSha, baseSha, [{ path: "README.md", changeType: "MODIFIED" }]),
+    ).rejects.toThrow("Git entry README.md is missing");
+    await expect(
+      adapter.fetchFileModes("octo-org", "demo-repo", "abc123", baseSha, [{ path: "README.md", changeType: "MODIFIED" }]),
+    ).rejects.toThrow("invalid head SHA");
+    await expect(
+      adapter.fetchFileModes("octo-org", "demo-repo", headSha, baseSha, [{ path: "../README.md", changeType: "ADDED" }]),
+    ).rejects.toThrow("unsafe path");
   });
 
   it("creates an approval review against the verified commit OID", async () => {

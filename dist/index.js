@@ -36361,7 +36361,88 @@ function getOctokit(token, options, ...additionalPlugins) {
     return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 //# sourceMappingURL=github.js.map
+;// CONCATENATED MODULE: ./src/pr-seal/paths.ts
+const PATTERN_MAX_LENGTH = 512;
+function isSafeRelativePath(path) {
+    if (path.length === 0 || path.length > 1024) {
+        return false;
+    }
+    if (/[\0\r\n\\]/.test(path)) {
+        return false;
+    }
+    if (path.startsWith("/") || path.endsWith("/")) {
+        return false;
+    }
+    const parts = path.split("/");
+    return parts.every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+function compileGlob(pattern) {
+    if (pattern.length === 0 || pattern.length > PATTERN_MAX_LENGTH) {
+        throw new Error(`invalid glob pattern: ${pattern}`);
+    }
+    if (/[\0\r\n\\]/.test(pattern) || pattern.startsWith("/") || pattern.endsWith("/")) {
+        throw new Error(`invalid glob pattern: ${pattern}`);
+    }
+    const segments = pattern.split("/");
+    if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+        throw new Error(`invalid glob pattern: ${pattern}`);
+    }
+    let source = "";
+    let needsSeparator = false;
+    for (let index = 0; index < segments.length; index += 1) {
+        const segment = segments[index];
+        const isLast = index === segments.length - 1;
+        if (segment === "**") {
+            if (segments.length === 1) {
+                source += ".*";
+            }
+            else if (isLast) {
+                if (needsSeparator) {
+                    source += "/";
+                }
+                source += ".*";
+            }
+            else if (needsSeparator) {
+                source += "/(?:[^/]+/)*";
+            }
+            else {
+                source += "(?:[^/]+/)*";
+            }
+            needsSeparator = false;
+            continue;
+        }
+        if (needsSeparator) {
+            source += "/";
+        }
+        source += compileSegment(segment);
+        needsSeparator = true;
+    }
+    return new RegExp(`^${source}$`);
+}
+function matchesAnyGlob(patterns, path) {
+    return patterns.some((pattern) => compileGlob(pattern).test(path));
+}
+function compileSegment(segment) {
+    let source = "";
+    for (const character of segment) {
+        if (character === "*") {
+            source += "[^/]*";
+        }
+        else if (character === "?") {
+            source += "[^/]";
+        }
+        else {
+            source += escapeRegex(character);
+        }
+    }
+    return source;
+}
+function escapeRegex(character) {
+    return character.replace(/[\\^$+?.()|{}\[\]]/g, "\\$&");
+}
+
 ;// CONCATENATED MODULE: ./src/github/seal-adapter.ts
+
 
 function createGitHubSealAdapter(tokens) {
     const approveClient = getOctokit(tokens.approveToken);
@@ -36370,15 +36451,19 @@ function createGitHubSealAdapter(tokens) {
     const mergeGraphql = mergeClient.graphql;
     return {
         fetchPullRequestSnapshot: (owner, repo, pullNumber) => fetchPullRequestSnapshot(mergeGraphql, owner, repo, pullNumber),
+        fetchPullRequestRefs: (owner, repo, pullNumber) => fetchPullRequestRefs(mergeGraphql, owner, repo, pullNumber),
+        fetchFileModes: (owner, repo, headSha, baseSha, files) => fetchFileModes(mergeGraphql, owner, repo, headSha, baseSha, files),
         approvePullRequest: (pullRequestId, headSha, body) => approvePullRequest(approveGraphql, pullRequestId, headSha, body),
+        dismissPullRequestReview: (reviewId, message) => dismissPullRequestReview(approveGraphql, reviewId, message),
         enableAutoMerge: (pullRequestId, headSha, mergeMethod) => enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
         mergePullRequest: (pullRequestId, headSha, mergeMethod) => mergePullRequest(mergeGraphql, pullRequestId, headSha, mergeMethod),
     };
 }
 async function fetchPullRequestSnapshot(graphql, owner, repo, pullNumber) {
-    const changedFiles = [];
+    const files = [];
     let fileCursor = null;
     let firstHeadSha;
+    let firstBaseSha;
     let pullRequest;
     for (;;) {
         const response = (await graphql(`query($owner: String!, $repo: String!, $pullNumber: Int!, $fileCursor: String) {
@@ -36389,6 +36474,7 @@ async function fetchPullRequestSnapshot(graphql, owner, repo, pullNumber) {
             state
             author { login }
             headRefOid
+            baseRefOid
             files(first: 100, after: $fileCursor) {
               nodes { path changeType }
               pageInfo { hasNextPage endCursor }
@@ -36400,16 +36486,24 @@ async function fetchPullRequestSnapshot(graphql, owner, repo, pullNumber) {
         if (!data) {
             throw new Error(`Failed to resolve pull request ${owner}/${repo}#${pullNumber}`);
         }
+        if (!data.headRefOid || !data.baseRefOid) {
+            throw new Error(`Failed to resolve pull request refs for ${owner}/${repo}#${pullNumber}`);
+        }
         if (firstHeadSha && data.headRefOid !== firstHeadSha) {
             throw new Error(`Refusing to seal ${owner}/${repo}#${pullNumber} because changed file pagination observed multiple head SHAs: ${firstHeadSha}, ${data.headRefOid}`);
         }
+        if (firstBaseSha && data.baseRefOid !== firstBaseSha) {
+            throw new Error(`Refusing to seal ${owner}/${repo}#${pullNumber} because changed file pagination observed multiple base SHAs: ${firstBaseSha}, ${data.baseRefOid}`);
+        }
         firstHeadSha = data.headRefOid;
+        firstBaseSha = data.baseRefOid;
         pullRequest = {
             id: data.id,
             number: data.number,
             state: data.state.toLowerCase(),
             authorLogin: data.author?.login ?? "",
             headSha: data.headRefOid,
+            baseSha: data.baseRefOid,
         };
         if (!data.files.nodes) {
             throw new Error(`GitHub did not return changed-file nodes for ${owner}/${repo}#${pullNumber}`);
@@ -36418,10 +36512,7 @@ async function fetchPullRequestSnapshot(graphql, owner, repo, pullNumber) {
             if (!file?.path || !file.changeType) {
                 throw new Error(`GitHub returned an incomplete changed-file node for ${owner}/${repo}#${pullNumber}`);
             }
-            if (file.changeType === "RENAMED") {
-                throw new Error(`Refusing to seal ${owner}/${repo}#${pullNumber} because renamed files cannot be safely verified: ${file.path}`);
-            }
-            changedFiles.push(file.path);
+            files.push({ path: file.path, changeType: file.changeType });
         }
         if (!data.files.pageInfo.hasNextPage) {
             break;
@@ -36431,7 +36522,109 @@ async function fetchPullRequestSnapshot(graphql, owner, repo, pullNumber) {
         }
         fileCursor = data.files.pageInfo.endCursor;
     }
-    return { pullRequest: pullRequest, changedFiles };
+    return {
+        pullRequest: pullRequest,
+        changedFiles: files.map((file) => file.path),
+        files,
+    };
+}
+async function fetchPullRequestRefs(graphql, owner, repo, pullNumber) {
+    const response = (await graphql(`query($owner: String!, $repo: String!, $pullNumber: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pullNumber) {
+          state
+          headRefOid
+          baseRefOid
+        }
+      }
+    }`, { owner, repo, pullNumber }));
+    const pullRequest = response.repository?.pullRequest;
+    if (!pullRequest?.headRefOid || !pullRequest.baseRefOid) {
+        throw new Error(`Failed to resolve pull request refs for ${owner}/${repo}#${pullNumber}`);
+    }
+    return {
+        state: pullRequest.state.toLowerCase(),
+        headSha: pullRequest.headRefOid,
+        baseSha: pullRequest.baseRefOid,
+    };
+}
+async function fetchFileModes(graphql, owner, repo, headSha, baseSha, files) {
+    assertCommitSha(headSha, "head SHA");
+    assertCommitSha(baseSha, "base SHA");
+    const cache = new Map();
+    const snapshots = [];
+    for (const file of files) {
+        if (!isSafeRelativePath(file.path)) {
+            throw new Error(`Refusing to read git metadata for unsafe path ${file.path}`);
+        }
+        const changeType = file.changeType.toUpperCase();
+        const headRequired = changeType !== "DELETED";
+        const baseRequired = changeType === "DELETED" || changeType === "MODIFIED" || changeType === "CHANGED";
+        snapshots.push({
+            path: file.path,
+            changeType: file.changeType,
+            head: await lookupTreeEntry(graphql, owner, repo, headSha, file.path, headRequired, cache),
+            base: await lookupTreeEntry(graphql, owner, repo, baseSha, file.path, baseRequired, cache),
+        });
+    }
+    return snapshots;
+}
+async function lookupTreeEntry(graphql, owner, repo, sha, filePath, required, cache) {
+    const slash = filePath.lastIndexOf("/");
+    const directory = slash === -1 ? "" : filePath.slice(0, slash);
+    const name = slash === -1 ? filePath : filePath.slice(slash + 1);
+    const listing = await loadDirectory(graphql, owner, repo, sha, directory, cache);
+    if (!listing) {
+        if (required) {
+            throw new Error(`Git tree for ${directory || "."} at ${sha} is unavailable`);
+        }
+        return null;
+    }
+    const entry = listing.get(name) ?? null;
+    if (!entry && required) {
+        throw new Error(`Git entry ${filePath} is missing at ${sha}`);
+    }
+    return entry;
+}
+async function loadDirectory(graphql, owner, repo, sha, directory, cache) {
+    const cacheKey = `${sha}:${directory}`;
+    const cached = cache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached;
+    }
+    const expression = directory.length === 0 ? `${sha}:` : `${sha}:${directory}`;
+    const response = (await graphql(`query($owner: String!, $repo: String!, $expression: String!) {
+      repository(owner: $owner, name: $repo) {
+        object(expression: $expression) {
+          __typename
+          ... on Tree {
+            entries { name mode type }
+          }
+        }
+      }
+    }`, { owner, repo, expression }));
+    const object = response.repository?.object;
+    if (!object) {
+        cache.set(cacheKey, null);
+        return null;
+    }
+    if (object.__typename !== "Tree" || !object.entries) {
+        throw new Error(`Git object ${expression} is not a tree`);
+    }
+    const listing = new Map();
+    for (const entry of object.entries) {
+        if (!entry?.name || typeof entry.mode !== "number" || !entry.type) {
+            throw new Error(`GitHub returned an incomplete tree entry for ${expression}`);
+        }
+        listing.set(entry.name, { mode: entry.mode, type: entry.type });
+    }
+    cache.set(cacheKey, listing);
+    return listing;
+}
+function assertCommitSha(sha, label) {
+    if (!/^[0-9a-f]{40}$/i.test(sha) && !/^[0-9a-f]{64}$/i.test(sha)) {
+        throw new Error(`Refusing to read git metadata for an invalid ${label}`);
+    }
 }
 async function approvePullRequest(graphql, pullRequestId, headSha, body) {
     const response = (await graphql(`mutation($pullRequestId: ID!, $commitOID: GitObjectID!, $body: String!) {
@@ -36449,6 +36642,19 @@ async function approvePullRequest(graphql, pullRequestId, headSha, body) {
         throw new Error("GitHub did not return an approval review ID");
     }
     return reviewId;
+}
+async function dismissPullRequestReview(graphql, reviewId, message) {
+    const response = (await graphql(`mutation($reviewId: ID!, $message: String!) {
+      dismissPullRequestReview(input: {
+        pullRequestReviewId: $reviewId,
+        message: $message
+      }) {
+        pullRequestReview { id }
+      }
+    }`, { reviewId, message }));
+    if (!response.dismissPullRequestReview.pullRequestReview?.id) {
+        throw new Error("GitHub did not return a dismissed review ID");
+    }
 }
 async function enableAutoMerge(graphql, pullRequestId, headSha, mergeMethod) {
     const response = (await graphql(`mutation($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) {
@@ -36488,7 +36694,419 @@ function toGraphqlMergeMethod(mergeMethod) {
     return "REBASE";
 }
 
+;// CONCATENATED MODULE: ./src/pr-seal/file-mode.ts
+const GIT_MODE_REGULAR = 0o100644;
+const GIT_MODE_EXECUTABLE = 0o100755;
+const GIT_MODE_SYMLINK = 0o120000;
+const GIT_MODE_SUBMODULE = 0o160000;
+const GIT_MODE_TREE = 0o040000;
+const KNOWN_CHANGE_TYPES = new Set(["ADDED", "DELETED", "MODIFIED", "CHANGED", "COPIED"]);
+function classifyGitMode(mode, type) {
+    if (type === "commit" || mode === GIT_MODE_SUBMODULE) {
+        return "submodule";
+    }
+    if (type === "tree" || mode === GIT_MODE_TREE) {
+        return "tree";
+    }
+    if (mode === GIT_MODE_SYMLINK) {
+        return "symlink";
+    }
+    if (mode === GIT_MODE_EXECUTABLE) {
+        return "executable";
+    }
+    if (mode === GIT_MODE_REGULAR && type === "blob") {
+        return "regular";
+    }
+    return "unknown";
+}
+function evaluateRegularFiles(subject, files) {
+    const problems = [];
+    for (const file of files) {
+        const decision = evaluateFile(file);
+        if (decision.ok) {
+            continue;
+        }
+        if (decision.hard) {
+            return { ok: false, hard: true, reason: `Refusing to seal ${subject} because ${decision.reason}` };
+        }
+        problems.push(decision.reason);
+    }
+    if (problems.length === 0) {
+        return { ok: true };
+    }
+    return {
+        ok: false,
+        hard: false,
+        reason: `Refusing to seal ${subject} because ${problems.join("; ")}`,
+    };
+}
+function evaluateFile(file) {
+    const changeType = file.changeType.toUpperCase();
+    if (!KNOWN_CHANGE_TYPES.has(changeType)) {
+        return {
+            ok: false,
+            hard: true,
+            reason: `${file.path} has an unrecognized change status ${file.changeType}`,
+        };
+    }
+    if (changeType === "DELETED") {
+        if (file.head) {
+            return { ok: false, hard: true, reason: `${file.path} is marked deleted but still exists at head` };
+        }
+        if (!file.base) {
+            return { ok: false, hard: true, reason: `${file.path} has no base git entry` };
+        }
+        return sideProblem(file.path, file.base, "base") ?? { ok: true };
+    }
+    if (!file.head) {
+        return { ok: false, hard: true, reason: `${file.path} has no head git entry` };
+    }
+    const headProblem = sideProblem(file.path, file.head, "head");
+    if (headProblem) {
+        return headProblem;
+    }
+    if (changeType === "ADDED" || changeType === "COPIED") {
+        if (!file.base) {
+            return { ok: true };
+        }
+        const replaced = classifyGitMode(file.base.mode, file.base.type);
+        if (replaced === "unknown") {
+            return {
+                ok: false,
+                hard: true,
+                reason: `${file.path} replaces an unrecognized git mode ${file.base.mode} (${file.base.type}) on the base`,
+            };
+        }
+        if (replaced !== "regular") {
+            return { ok: false, hard: false, reason: `${file.path} replaces a non-regular file on the base` };
+        }
+        return { ok: true };
+    }
+    if (!file.base) {
+        return { ok: false, hard: true, reason: `${file.path} has no base git entry` };
+    }
+    return sideProblem(file.path, file.base, "base") ?? { ok: true };
+}
+function sideProblem(path, entry, side) {
+    const kind = classifyGitMode(entry.mode, entry.type);
+    if (kind === "regular") {
+        return null;
+    }
+    if (kind === "unknown") {
+        return {
+            ok: false,
+            hard: true,
+            reason: `${path} has an unrecognized git mode ${entry.mode} (${entry.type}) at ${side}`,
+        };
+    }
+    return { ok: false, hard: false, reason: `${path} is ${describeKind(kind)} at ${side}` };
+}
+function describeKind(kind) {
+    if (kind === "executable") {
+        return "executable";
+    }
+    if (kind === "symlink") {
+        return "a symlink";
+    }
+    if (kind === "submodule") {
+        return "a submodule";
+    }
+    return "a directory";
+}
+
+;// CONCATENATED MODULE: ./src/pr-seal/docs-config-preset.ts
+
+const DOC_EXTENSIONS = new Set([
+    ".md",
+    ".markdown",
+    ".rst",
+    ".adoc",
+    ".asciidoc",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+]);
+const DOC_BASENAMES = new Set([
+    "license",
+    "license.md",
+    "license.txt",
+    "copying",
+    "copying.md",
+    "notice",
+    "notice.md",
+    "notice.txt",
+    "authors",
+    "authors.md",
+    "changelog",
+    "changelog.md",
+    "contributors",
+    "contributors.md",
+]);
+const CONFIG_BASENAMES = new Set([
+    ".editorconfig",
+    ".gitignore",
+    ".prettierignore",
+    ".prettierrc",
+    ".prettierrc.json",
+    ".prettierrc.yml",
+    ".prettierrc.yaml",
+    ".prettierrc.toml",
+    ".markdownlint.json",
+    ".markdownlint.yaml",
+    ".markdownlint.yml",
+    ".markdownlint-cli2.jsonc",
+    ".markdownlint-cli2.yaml",
+    ".markdownlintrc",
+    "tombi.toml",
+    "cliff.toml",
+    ".pinact.yaml",
+    ".commitlintrc",
+    ".commitlintrc.json",
+    ".commitlintrc.yml",
+    ".commitlintrc.yaml",
+    "jsconfig.json",
+    "biome.json",
+    "biome.jsonc",
+    ".yamllint",
+    ".yamllint.yml",
+    ".yamllint.yaml",
+]);
+const EXACT_CONFIG_PATHS = new Set([
+    ".github/pr-diff-groups.json",
+    ".github/FUNDING.yml",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/DISCUSSION_TEMPLATE/config.yml",
+]);
+const SCRIPT_EXTENSIONS = new Set([
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ksh",
+    ".fish",
+    ".ps1",
+    ".psm1",
+    ".bat",
+    ".cmd",
+    ".py",
+    ".pyw",
+    ".rb",
+    ".pl",
+    ".pm",
+    ".php",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mts",
+    ".cts",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".kts",
+    ".swift",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".cs",
+    ".fs",
+    ".vb",
+    ".scala",
+    ".groovy",
+    ".lua",
+    ".dart",
+    ".ex",
+    ".exs",
+    ".clj",
+    ".hs",
+    ".ml",
+    ".r",
+    ".jl",
+]);
+const UNSAFE_BASENAMES = new Set([
+    "action.yml",
+    "action.yaml",
+    "dockerfile",
+    "containerfile",
+    "makefile",
+    "gnumakefile",
+    "justfile",
+    "jenkinsfile",
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    "go.mod",
+    "go.sum",
+    "cargo.toml",
+    "cargo.lock",
+    "pyproject.toml",
+    "pipfile",
+    "pipfile.lock",
+    "poetry.lock",
+    "uv.lock",
+    "requirements.txt",
+    "setup.py",
+    "setup.cfg",
+    "gemfile",
+    "gemfile.lock",
+    "composer.json",
+    "composer.lock",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "flake.nix",
+    "flake.lock",
+    "default.nix",
+    "shell.nix",
+    "cmakelists.txt",
+    "meson.build",
+    "lefthook.yml",
+    "lefthook.yaml",
+    "procfile",
+    "codeowners",
+    "dependabot.yml",
+    "dependabot.yaml",
+    "renovate.json",
+    "renovate.json5",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+    "taskfile.yml",
+    "taskfile.yaml",
+    "mix.exs",
+    "pubspec.yaml",
+    "pubspec.lock",
+    "package.swift",
+    "module.bazel",
+    "workspace",
+    "workspace.bazel",
+    ".gitlab-ci.yml",
+    ".travis.yml",
+    "appveyor.yml",
+    "azure-pipelines.yml",
+    "netlify.toml",
+    "vercel.json",
+    "fly.toml",
+    "render.yaml",
+    "mise.toml",
+    ".mise.toml",
+    ".npmrc",
+    ".nvmrc",
+    ".node-version",
+    ".python-version",
+    ".tool-versions",
+    "release-please-config.json",
+    ".release-please-manifest.json",
+]);
+const UNSAFE_EXTENSIONS = new Set([".lock", ".nix", ".gemspec", ".csproj", ".fsproj", ".sln"]);
+function evaluateDocsConfigPath(path) {
+    if (!isSafeRelativePath(path)) {
+        return { allowed: false, denied: true, reason: "is an invalid path" };
+    }
+    if (isWorkflowOrActionPath(path)) {
+        return { allowed: false, denied: true, reason: "is in a workflow or action directory" };
+    }
+    const unsafeReason = knownUnsafeReason(path);
+    if (unsafeReason) {
+        return { allowed: false, denied: true, reason: unsafeReason };
+    }
+    if (isAllowlisted(path)) {
+        return { allowed: true, denied: false, reason: "" };
+    }
+    return {
+        allowed: false,
+        denied: false,
+        reason: "is not documentation or non-executable configuration",
+    };
+}
+function isAllowlisted(path) {
+    const base = basename(path);
+    if (DOC_BASENAMES.has(base.toLowerCase())) {
+        return true;
+    }
+    if (EXACT_CONFIG_PATHS.has(path)) {
+        return true;
+    }
+    if (CONFIG_BASENAMES.has(base)) {
+        return true;
+    }
+    if (/^tsconfig(?:\.[A-Za-z0-9_-]+)?\.json$/.test(base)) {
+        return true;
+    }
+    return DOC_EXTENSIONS.has(extensionOf(base));
+}
+function knownUnsafeReason(path) {
+    const base = basename(path);
+    const lower = base.toLowerCase();
+    if (lower === "action.yml" || lower === "action.yaml") {
+        return "is a GitHub Action definition";
+    }
+    if (/^(?:dockerfile|containerfile|jenkinsfile)(?:\..+)?$/.test(lower) ||
+        /^requirements(?:[-_][^/]+)?\.txt$/.test(lower)) {
+        return "is a build or CI file";
+    }
+    if (UNSAFE_BASENAMES.has(lower)) {
+        return "is a build, lock, task, or CI file";
+    }
+    const extension = extensionOf(base);
+    if (SCRIPT_EXTENSIONS.has(extension)) {
+        return "is executable source";
+    }
+    if (UNSAFE_EXTENSIONS.has(extension)) {
+        return "is a build or lock file";
+    }
+    return null;
+}
+function isWorkflowOrActionPath(path) {
+    const parts = path.split("/");
+    for (let index = 0; index < parts.length - 1; index += 1) {
+        const parent = parts[index].toLowerCase();
+        const child = parts[index + 1].toLowerCase();
+        if (parent === ".github" && (child === "workflows" || child === "actions")) {
+            return true;
+        }
+    }
+    return false;
+}
+function basename(path) {
+    const slash = path.lastIndexOf("/");
+    return slash === -1 ? path : path.slice(slash + 1);
+}
+function extensionOf(name) {
+    const lower = name.toLowerCase();
+    const dot = lower.lastIndexOf(".");
+    if (dot <= 0) {
+        return "";
+    }
+    return lower.slice(dot);
+}
+
 ;// CONCATENATED MODULE: ./src/pr-seal/verify.ts
+
+
+class IneligiblePullRequestError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "IneligiblePullRequestError";
+    }
+}
+const RENAMED = "RENAMED";
 function verifyPullRequestSafety(pullRequest, changedFiles, inputs) {
     const subject = `${inputs.repository}#${inputs.pullRequestNumber}`;
     if (pullRequest.state !== "open") {
@@ -36497,13 +37115,40 @@ function verifyPullRequestSafety(pullRequest, changedFiles, inputs) {
     if (pullRequest.number !== inputs.pullRequestNumber) {
         throw new Error(`Fetched pull request number ${pullRequest.number} does not match requested ${subject}`);
     }
-    if (pullRequest.authorLogin !== inputs.expectedAuthor) {
-        throw new Error(`Refusing to seal ${subject} because the PR author is ${pullRequest.authorLogin}, expected ${inputs.expectedAuthor}`);
+    if (inputs.expectedAuthors.length > 0 && !inputs.expectedAuthors.includes(pullRequest.authorLogin)) {
+        const expected = inputs.expectedAuthors.length === 1
+            ? inputs.expectedAuthors[0]
+            : `one of: ${inputs.expectedAuthors.join(", ")}`;
+        throw new IneligiblePullRequestError(`Refusing to seal ${subject} because the PR author is ${pullRequest.authorLogin}, expected ${expected}`);
     }
-    const allowedPathSet = new Set(inputs.allowedPaths);
-    const disallowedPaths = changedFiles.filter((file) => !allowedPathSet.has(file));
-    if (disallowedPaths.length > 0) {
-        throw new Error(`Refusing to seal ${subject} because changed files include disallowed paths: ${disallowedPaths.join(", ")}. Allowed paths: ${inputs.allowedPaths.join(", ")}`);
+    const extended = inputs.allowedPatterns.length > 0 || inputs.deniedPatterns.length > 0 || inputs.pathPreset !== "none";
+    for (const file of changedFiles) {
+        if (extended && !isSafeRelativePath(file.path)) {
+            throw new IneligiblePullRequestError(`Refusing to seal ${subject} because a changed path is invalid`);
+        }
+    }
+    const renamed = changedFiles.filter((file) => file.changeType.toUpperCase() === RENAMED).map((file) => file.path);
+    if (renamed.length > 0) {
+        throw new IneligiblePullRequestError(`Refusing to seal ${subject} because renamed files cannot be safely verified: ${renamed.join(", ")}`);
+    }
+    if (inputs.pathPreset === "docs-and-config" && changedFiles.length === 0) {
+        throw new IneligiblePullRequestError(`Refusing to seal ${subject} because the pull request does not change any file`);
+    }
+    if (!extended) {
+        const allowedPathSet = new Set(inputs.allowedPaths);
+        const disallowedPaths = changedFiles.filter((file) => !allowedPathSet.has(file.path)).map((file) => file.path);
+        if (disallowedPaths.length > 0) {
+            throw new IneligiblePullRequestError(`Refusing to seal ${subject} because changed files include disallowed paths: ${disallowedPaths.join(", ")}. Allowed paths: ${inputs.allowedPaths.join(", ")}`);
+        }
+    }
+    else {
+        const reasons = changedFiles.flatMap((file) => {
+            const reason = explainPathRejection(file.path, inputs);
+            return reason ? [`${file.path} (${reason})`] : [];
+        });
+        if (reasons.length > 0) {
+            throw new IneligiblePullRequestError(`Refusing to seal ${subject} because changed files include disallowed paths: ${reasons.join("; ")}`);
+        }
     }
     if (pullRequest.id.length === 0) {
         throw new Error(`Failed to resolve pull request node ID for ${subject}`);
@@ -36511,38 +37156,92 @@ function verifyPullRequestSafety(pullRequest, changedFiles, inputs) {
     if (pullRequest.headSha.length === 0) {
         throw new Error(`Failed to resolve pull request head SHA for ${subject}`);
     }
+    if (pullRequest.baseSha.length === 0) {
+        throw new Error(`Failed to resolve pull request base SHA for ${subject}`);
+    }
     return {
         pullRequestId: pullRequest.id,
         headSha: pullRequest.headSha,
-        changedFiles,
+        baseSha: pullRequest.baseSha,
+        changedFiles: changedFiles.map((file) => file.path),
     };
+}
+function explainPathRejection(path, inputs) {
+    if (matchesAnyGlob(inputs.deniedPatterns, path)) {
+        return "matches a denied pattern";
+    }
+    const preset = inputs.pathPreset === "docs-and-config" ? evaluateDocsConfigPath(path) : null;
+    if (preset?.denied) {
+        return preset.reason;
+    }
+    if (inputs.allowedPaths.includes(path) || matchesAnyGlob(inputs.allowedPatterns, path)) {
+        return null;
+    }
+    if (preset?.allowed) {
+        return null;
+    }
+    if (preset) {
+        return preset.reason;
+    }
+    return "is not an allowed path";
 }
 
 ;// CONCATENATED MODULE: ./src/pr-seal/seal.ts
 
+
+const STALE_APPROVAL_MESSAGE = "Dismissed because the pull request changed after the verified head was approved.";
 async function sealPullRequest(inputs, github) {
     const { owner, repo, value } = inputs.repository;
     const snapshot = await github.fetchPullRequestSnapshot(owner, repo, inputs.pullRequestNumber);
-    const verified = verifyPullRequestSafety(snapshot.pullRequest, snapshot.changedFiles, {
-        repository: value,
-        pullRequestNumber: inputs.pullRequestNumber,
-        expectedAuthor: inputs.expectedAuthor,
-        allowedPaths: inputs.allowedPaths,
-    });
-    await github.approvePullRequest(verified.pullRequestId, verified.headSha, inputs.approveBody);
-    let autoMergeEnabled = false;
-    let merged = false;
+    const subject = `${value}#${inputs.pullRequestNumber}`;
+    let verified;
     try {
-        await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
-        autoMergeEnabled = true;
+        verified = verifyPullRequestSafety(snapshot.pullRequest, snapshot.files, {
+            repository: value,
+            pullRequestNumber: inputs.pullRequestNumber,
+            expectedAuthors: inputs.expectedAuthors,
+            allowedPaths: inputs.allowedPaths,
+            allowedPatterns: inputs.allowedPatterns,
+            deniedPatterns: inputs.deniedPatterns,
+            pathPreset: inputs.pathPreset,
+        });
     }
     catch (error) {
-        if (!isCleanPullRequestAutoMergeError(error)) {
-            throw error;
+        return rethrowUnlessSkipped(inputs, snapshot, error);
+    }
+    if (inputs.requireRegularFiles) {
+        const filesWithModes = await github.fetchFileModes(owner, repo, verified.headSha, verified.baseSha, snapshot.files);
+        const decision = evaluateRegularFiles(subject, filesWithModes);
+        if (!decision.ok) {
+            if (decision.hard || inputs.onIneligible === "fail") {
+                throw new Error(decision.reason);
+            }
+            return ineligibleResult(snapshot, decision.reason);
         }
-        await github.mergePullRequest(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
-        autoMergeEnabled = false;
-        merged = true;
+    }
+    await assertStillPinned(github, owner, repo, inputs.pullRequestNumber, verified);
+    const reviewId = await github.approvePullRequest(verified.pullRequestId, verified.headSha, inputs.approveBody);
+    try {
+        await assertStillPinned(github, owner, repo, inputs.pullRequestNumber, verified);
+    }
+    catch (error) {
+        await dismissStaleApproval(github, reviewId, error);
+    }
+    let autoMergeEnabled = false;
+    let merged = false;
+    if (inputs.autoMerge) {
+        try {
+            await github.enableAutoMerge(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+            autoMergeEnabled = true;
+        }
+        catch (error) {
+            if (!isCleanPullRequestAutoMergeError(error)) {
+                throw error;
+            }
+            await github.mergePullRequest(verified.pullRequestId, verified.headSha, inputs.mergeMethod);
+            autoMergeEnabled = false;
+            merged = true;
+        }
     }
     return {
         pullRequestId: verified.pullRequestId,
@@ -36551,25 +37250,94 @@ async function sealPullRequest(inputs, github) {
         approved: true,
         autoMergeEnabled,
         merged,
+        eligible: true,
+        reason: "",
     };
+}
+function rethrowUnlessSkipped(inputs, snapshot, error) {
+    if (inputs.onIneligible === "skip" && error instanceof IneligiblePullRequestError) {
+        return ineligibleResult(snapshot, error.message);
+    }
+    throw error;
+}
+function ineligibleResult(snapshot, reason) {
+    return {
+        pullRequestId: snapshot.pullRequest.id,
+        headSha: snapshot.pullRequest.headSha,
+        changedFiles: snapshot.files.map((file) => file.path),
+        approved: false,
+        autoMergeEnabled: false,
+        merged: false,
+        eligible: false,
+        reason,
+    };
+}
+async function assertStillPinned(github, owner, repo, pullRequestNumber, verified) {
+    const subject = `${owner}/${repo}#${pullRequestNumber}`;
+    const refs = await github.fetchPullRequestRefs(owner, repo, pullRequestNumber);
+    if (refs.state !== "open") {
+        throw new Error(`Refusing to seal ${subject} because the pull request is ${refs.state}`);
+    }
+    if (refs.headSha !== verified.headSha) {
+        throw new Error(`Refusing to seal ${subject} because the pull request head SHA changed from ${verified.headSha} to ${refs.headSha} after verification`);
+    }
+    if (refs.baseSha !== verified.baseSha) {
+        throw new Error(`Refusing to seal ${subject} because the pull request base SHA changed from ${verified.baseSha} to ${refs.baseSha} after verification`);
+    }
+}
+async function dismissStaleApproval(github, reviewId, error) {
+    try {
+        await github.dismissPullRequestReview(reviewId, STALE_APPROVAL_MESSAGE);
+    }
+    catch (dismissError) {
+        const dismissMessage = dismissError instanceof Error ? dismissError.message : String(dismissError);
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`${originalMessage}. Also failed to dismiss the approval: ${dismissMessage}`);
+    }
+    throw error;
 }
 function isCleanPullRequestAutoMergeError(error) {
     return error instanceof Error && error.message.includes("Pull request is in clean status");
 }
 
 ;// CONCATENATED MODULE: ./src/action/inputs.ts
+
 const DEFAULT_APPROVE_BODY = "Automated approval by pr-seal-action after author and changed-file verification.";
 function parseInputs(reader, context) {
     const repositoryValue = optionalInput(reader, "repository") || `${context.repo.owner}/${context.repo.repo}`;
+    const pullRequestNumber = parsePositiveInteger(requiredInput(reader, "pull-request-number"), "pull-request-number");
+    const requireExpectedAuthor = parseBoolean(optionalInput(reader, "require-expected-author"), "require-expected-author", true);
+    const listedAuthors = parseLineList(optionalInput(reader, "expected-authors"));
+    const expectedAuthor = requireExpectedAuthor && listedAuthors.length === 0
+        ? requiredInput(reader, "expected-author")
+        : optionalInput(reader, "expected-author");
+    const expectedAuthors = unique([expectedAuthor, ...listedAuthors].filter((author) => author.length > 0));
+    if (requireExpectedAuthor && expectedAuthors.length === 0) {
+        throw new Error("expected-author is required");
+    }
+    const pathPreset = parsePathPreset(optionalInput(reader, "path-preset"));
+    const allowedPatterns = parsePatterns(optionalInput(reader, "allowed-patterns"), "allowed-patterns");
+    const deniedPatterns = parsePatterns(optionalInput(reader, "denied-patterns"), "denied-patterns");
+    const allowedPaths = allowedPatterns.length === 0 && pathPreset === "none"
+        ? parseAllowedPaths(reader.getInput("allowed-paths", { required: true }))
+        : parseLineList(optionalInput(reader, "allowed-paths"));
+    const requireRegularFiles = parseBoolean(optionalInput(reader, "require-regular-files"), "require-regular-files", false) ||
+        pathPreset === "docs-and-config";
     return {
         repository: parseRepository(repositoryValue),
-        pullRequestNumber: parsePositiveInteger(requiredInput(reader, "pull-request-number"), "pull-request-number"),
-        expectedAuthor: requiredInput(reader, "expected-author"),
-        allowedPaths: parseAllowedPaths(reader.getInput("allowed-paths", { required: true })),
+        pullRequestNumber,
+        expectedAuthors,
+        allowedPaths,
+        allowedPatterns,
+        deniedPatterns,
+        pathPreset,
+        requireRegularFiles,
         approveToken: requiredInput(reader, "approve-token"),
         mergeToken: requiredInput(reader, "merge-token"),
         mergeMethod: parseMergeMethod(optionalInput(reader, "merge-method") || "squash"),
         approveBody: optionalInput(reader, "approve-body") || DEFAULT_APPROVE_BODY,
+        autoMerge: parseBoolean(optionalInput(reader, "auto-merge"), "auto-merge", true),
+        onIneligible: parseOnIneligible(optionalInput(reader, "on-ineligible")),
     };
 }
 function requiredInput(reader, name) {
@@ -36600,14 +37368,40 @@ function parsePositiveInteger(value, name) {
     return numberValue;
 }
 function parseAllowedPaths(value) {
-    const paths = value
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
+    const paths = parseLineList(value);
     if (paths.length === 0) {
         throw new Error("allowed-paths must include at least one path");
     }
     return paths;
+}
+function parseLineList(value) {
+    return value
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+}
+function parsePatterns(value, name) {
+    const patterns = parseLineList(value);
+    for (const pattern of patterns) {
+        try {
+            compileGlob(pattern);
+        }
+        catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new Error(`${name} contains an invalid pattern: ${detail}`);
+        }
+    }
+    return patterns;
+}
+function parsePathPreset(value) {
+    const normalized = value.toLowerCase();
+    if (normalized.length === 0 || normalized === "none") {
+        return "none";
+    }
+    if (normalized === "docs-and-config") {
+        return "docs-and-config";
+    }
+    throw new Error("path-preset must be docs-and-config or none");
 }
 function parseMergeMethod(value) {
     const normalized = value.toLowerCase();
@@ -36615,6 +37409,29 @@ function parseMergeMethod(value) {
         return normalized;
     }
     throw new Error("merge-method must be one of squash, merge, or rebase");
+}
+function parseBoolean(value, name, fallback) {
+    if (value.length === 0) {
+        return fallback;
+    }
+    const normalized = value.toLowerCase();
+    if (normalized === "true") {
+        return true;
+    }
+    if (normalized === "false") {
+        return false;
+    }
+    throw new Error(`${name} must be true or false`);
+}
+function parseOnIneligible(value) {
+    const normalized = value.toLowerCase() || "fail";
+    if (normalized === "fail" || normalized === "skip") {
+        return normalized;
+    }
+    throw new Error("on-ineligible must be fail or skip");
+}
+function unique(values) {
+    return [...new Set(values)];
 }
 
 ;// CONCATENATED MODULE: ./src/action/run.ts
@@ -36639,6 +37456,11 @@ async function run(dependencies) {
         dependencies.core.setOutput("approved", String(result.approved));
         dependencies.core.setOutput("auto-merge-enabled", String(result.autoMergeEnabled));
         dependencies.core.setOutput("merged", String(result.merged));
+        dependencies.core.setOutput("eligible", String(result.eligible));
+        dependencies.core.setOutput("reason", oneLine(result.reason));
+        if (!result.eligible && result.reason.length > 0) {
+            dependencies.core.info(oneLine(result.reason));
+        }
     }
     catch (error) {
         dependencies.core.setFailed(error instanceof Error ? error.message : String(error));
@@ -36646,6 +37468,9 @@ async function run(dependencies) {
 }
 async function runAction() {
     await run(createDefaultDependencies());
+}
+function oneLine(value) {
+    return value.replace(/[\r\n]+/g, " ").slice(0, 1000);
 }
 function createDefaultDependencies() {
     return {

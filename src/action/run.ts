@@ -15,6 +15,7 @@ interface ActionsCore extends InputReader {
   setSecret(secret: string): void;
   setOutput(name: string, value: string): void;
   setFailed(message: string): void;
+  info(message: string): void;
 }
 
 interface RunDependencies {
@@ -60,6 +61,11 @@ export async function run(dependencies: RunDependencies): Promise<void> {
       String(result.autoMergeEnabled),
     );
     dependencies.core.setOutput("merged", String(result.merged));
+    dependencies.core.setOutput("eligible", String(result.eligible));
+    dependencies.core.setOutput("reason", oneLine(result.reason));
+    if (!result.eligible && result.reason.length > 0) {
+      dependencies.core.info(oneLine(result.reason));
+    }
   } catch (error) {
     dependencies.core.setFailed(
       error instanceof Error ? error.message : String(error),
@@ -69,6 +75,10 @@ export async function run(dependencies: RunDependencies): Promise<void> {
 
 export async function runAction(): Promise<void> {
   await run(createDefaultDependencies());
+}
+
+function oneLine(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").slice(0, 1000);
 }
 
 function createDefaultDependencies(): RunDependencies {

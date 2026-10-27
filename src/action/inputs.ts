@@ -1,4 +1,8 @@
+import { compileGlob } from "../pr-seal/paths.js";
+import type { PathPreset } from "../pr-seal/verify.js";
+
 export type MergeMethod = "squash" | "merge" | "rebase";
+export type OnIneligible = "fail" | "skip";
 
 export const DEFAULT_APPROVE_BODY =
   "Automated approval by pr-seal-action after author and changed-file verification.";
@@ -23,26 +27,67 @@ export interface RepositoryInput {
 export interface ActionInputs {
   repository: RepositoryInput;
   pullRequestNumber: number;
-  expectedAuthor: string;
+  expectedAuthors: string[];
   allowedPaths: string[];
+  allowedPatterns: string[];
+  deniedPatterns: string[];
+  pathPreset: PathPreset;
+  requireRegularFiles: boolean;
   approveToken: string;
   mergeToken: string;
   mergeMethod: MergeMethod;
   approveBody: string;
+  autoMerge: boolean;
+  onIneligible: OnIneligible;
 }
 
 export function parseInputs(reader: InputReader, context: GitHubContextLike): ActionInputs {
   const repositoryValue = optionalInput(reader, "repository") || `${context.repo.owner}/${context.repo.repo}`;
+  const pullRequestNumber = parsePositiveInteger(
+    requiredInput(reader, "pull-request-number"),
+    "pull-request-number",
+  );
+  const requireExpectedAuthor = parseBoolean(
+    optionalInput(reader, "require-expected-author"),
+    "require-expected-author",
+    true,
+  );
+  const listedAuthors = parseLineList(optionalInput(reader, "expected-authors"));
+  const expectedAuthor =
+    requireExpectedAuthor && listedAuthors.length === 0
+      ? requiredInput(reader, "expected-author")
+      : optionalInput(reader, "expected-author");
+  const expectedAuthors = unique([expectedAuthor, ...listedAuthors].filter((author) => author.length > 0));
+  if (requireExpectedAuthor && expectedAuthors.length === 0) {
+    throw new Error("expected-author is required");
+  }
+
+  const pathPreset = parsePathPreset(optionalInput(reader, "path-preset"));
+  const allowedPatterns = parsePatterns(optionalInput(reader, "allowed-patterns"), "allowed-patterns");
+  const deniedPatterns = parsePatterns(optionalInput(reader, "denied-patterns"), "denied-patterns");
+  const allowedPaths =
+    allowedPatterns.length === 0 && pathPreset === "none"
+      ? parseAllowedPaths(reader.getInput("allowed-paths", { required: true }))
+      : parseLineList(optionalInput(reader, "allowed-paths"));
+  const requireRegularFiles =
+    parseBoolean(optionalInput(reader, "require-regular-files"), "require-regular-files", false) ||
+    pathPreset === "docs-and-config";
 
   return {
     repository: parseRepository(repositoryValue),
-    pullRequestNumber: parsePositiveInteger(requiredInput(reader, "pull-request-number"), "pull-request-number"),
-    expectedAuthor: requiredInput(reader, "expected-author"),
-    allowedPaths: parseAllowedPaths(reader.getInput("allowed-paths", { required: true })),
+    pullRequestNumber,
+    expectedAuthors,
+    allowedPaths,
+    allowedPatterns,
+    deniedPatterns,
+    pathPreset,
+    requireRegularFiles,
     approveToken: requiredInput(reader, "approve-token"),
     mergeToken: requiredInput(reader, "merge-token"),
     mergeMethod: parseMergeMethod(optionalInput(reader, "merge-method") || "squash"),
     approveBody: optionalInput(reader, "approve-body") || DEFAULT_APPROVE_BODY,
+    autoMerge: parseBoolean(optionalInput(reader, "auto-merge"), "auto-merge", true),
+    onIneligible: parseOnIneligible(optionalInput(reader, "on-ineligible")),
   };
 }
 
@@ -79,16 +124,42 @@ function parsePositiveInteger(value: string, name: string): number {
 }
 
 function parseAllowedPaths(value: string): string[] {
-  const paths = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
+  const paths = parseLineList(value);
   if (paths.length === 0) {
     throw new Error("allowed-paths must include at least one path");
   }
-
   return paths;
+}
+
+function parseLineList(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function parsePatterns(value: string, name: string): string[] {
+  const patterns = parseLineList(value);
+  for (const pattern of patterns) {
+    try {
+      compileGlob(pattern);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`${name} contains an invalid pattern: ${detail}`);
+    }
+  }
+  return patterns;
+}
+
+function parsePathPreset(value: string): PathPreset {
+  const normalized = value.toLowerCase();
+  if (normalized.length === 0 || normalized === "none") {
+    return "none";
+  }
+  if (normalized === "docs-and-config") {
+    return "docs-and-config";
+  }
+  throw new Error("path-preset must be docs-and-config or none");
 }
 
 function parseMergeMethod(value: string): MergeMethod {
@@ -97,4 +168,30 @@ function parseMergeMethod(value: string): MergeMethod {
     return normalized;
   }
   throw new Error("merge-method must be one of squash, merge, or rebase");
+}
+
+function parseBoolean(value: string, name: string, fallback: boolean): boolean {
+  if (value.length === 0) {
+    return fallback;
+  }
+  const normalized = value.toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  throw new Error(`${name} must be true or false`);
+}
+
+function parseOnIneligible(value: string): OnIneligible {
+  const normalized = value.toLowerCase() || "fail";
+  if (normalized === "fail" || normalized === "skip") {
+    return normalized;
+  }
+  throw new Error("on-ineligible must be fail or skip");
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
 }
