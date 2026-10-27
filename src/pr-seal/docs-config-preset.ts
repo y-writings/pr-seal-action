@@ -35,27 +35,8 @@ const CONFIG_BASENAMES = new Set([
   ".editorconfig",
   ".gitignore",
   ".prettierignore",
-  ".prettierrc",
-  ".prettierrc.json",
-  ".prettierrc.yml",
-  ".prettierrc.yaml",
-  ".prettierrc.toml",
-  ".markdownlint.json",
-  ".markdownlint.yaml",
-  ".markdownlint.yml",
-  ".markdownlint-cli2.jsonc",
-  ".markdownlint-cli2.yaml",
-  ".markdownlintrc",
   "tombi.toml",
-  "cliff.toml",
   ".pinact.yaml",
-  ".commitlintrc",
-  ".commitlintrc.json",
-  ".commitlintrc.yml",
-  ".commitlintrc.yaml",
-  "jsconfig.json",
-  "biome.json",
-  "biome.jsonc",
   ".yamllint",
   ".yamllint.yml",
   ".yamllint.yaml",
@@ -244,15 +225,21 @@ function isAllowlisted(path: string): boolean {
   if (CONFIG_BASENAMES.has(base)) {
     return true;
   }
-  if (/^tsconfig(?:\.[A-Za-z0-9_-]+)?\.json$/.test(base)) {
-    return true;
-  }
   return DOC_EXTENSIONS.has(extensionOf(base));
 }
 
 function knownUnsafeReason(path: string): string | null {
   const base = basename(path);
   const lower = base.toLowerCase();
+  if (
+    lower === "cliff.toml" ||
+    lower === "biome.json" ||
+    lower === "biome.jsonc" ||
+    /^(?:tsconfig|jsconfig)(?:\.[a-z0-9_-]+)?\.json$/.test(lower) ||
+    /^\.(?:prettierrc|markdownlint(?:-cli2)?|markdownlintrc|commitlintrc)(?:\..+)?$/.test(lower)
+  ) {
+    return "can run or load code";
+  }
   if (lower === "action.yml" || lower === "action.yaml") {
     return "is a GitHub Action definition";
   }

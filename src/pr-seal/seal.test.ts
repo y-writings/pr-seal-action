@@ -53,6 +53,7 @@ function dependencies(overrides?: {
   fetchFileModes?: ReturnType<typeof vi.fn<GitHubSealAdapter["fetchFileModes"]>>;
   approvePullRequest?: ReturnType<typeof vi.fn<GitHubSealAdapter["approvePullRequest"]>>;
   dismissPullRequestReview?: ReturnType<typeof vi.fn<GitHubSealAdapter["dismissPullRequestReview"]>>;
+  dismissPreviousApprovals?: ReturnType<typeof vi.fn<GitHubSealAdapter["dismissPreviousApprovals"]>>;
   enableAutoMerge?: ReturnType<typeof vi.fn<GitHubSealAdapter["enableAutoMerge"]>>;
   mergePullRequest?: ReturnType<typeof vi.fn<GitHubSealAdapter["mergePullRequest"]>>;
 }) {
@@ -75,6 +76,9 @@ function dependencies(overrides?: {
     dismissPullRequestReview:
       overrides?.dismissPullRequestReview ??
       vi.fn<GitHubSealAdapter["dismissPullRequestReview"]>(async () => undefined),
+    dismissPreviousApprovals:
+      overrides?.dismissPreviousApprovals ??
+      vi.fn<GitHubSealAdapter["dismissPreviousApprovals"]>(async () => undefined),
     enableAutoMerge:
       overrides?.enableAutoMerge ?? vi.fn<GitHubSealAdapter["enableAutoMerge"]>(async () => undefined),
     mergePullRequest:
@@ -203,6 +207,28 @@ describe("sealPullRequest", () => {
     expect(github.enableAutoMerge).not.toHaveBeenCalled();
   });
 
+  it("dismisses earlier automated approvals before reporting an ineligible path", async () => {
+    const github = dependencies({ snapshot: snapshot({ files: [{ path: "src/main.ts", changeType: "MODIFIED" }] }) });
+
+    await expect(sealPullRequest({ ...inputs, onIneligible: "skip" }, github)).resolves.toMatchObject({
+      eligible: false,
+    });
+    expect(github.dismissPreviousApprovals).toHaveBeenCalledWith("PR_node_id");
+    expect(github.approvePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("fails when an earlier automated approval cannot be dismissed", async () => {
+    const github = dependencies({
+      snapshot: snapshot({ files: [{ path: "src/main.ts", changeType: "MODIFIED" }] }),
+      dismissPreviousApprovals: vi.fn<GitHubSealAdapter["dismissPreviousApprovals"]>(async () => {
+        throw new Error("dismiss rejected");
+      }),
+    });
+
+    await expect(sealPullRequest({ ...inputs, onIneligible: "skip" }, github)).rejects.toThrow("dismiss rejected");
+    expect(github.approvePullRequest).not.toHaveBeenCalled();
+  });
+
   it("still fails closed on hard errors when ineligible results are skipped", async () => {
     const github = dependencies({
       fetchPullRequestSnapshot: failedSnapshot("GitHub did not return changed-file nodes for octo-org/demo-repo#9"),
@@ -225,6 +251,7 @@ describe("sealPullRequest", () => {
     });
 
     await expect(sealPullRequest(inputs, github)).rejects.toThrow("disallowed paths: package.json");
+    expect(github.dismissPreviousApprovals).toHaveBeenCalledWith("PR_node_id");
     expect(github.approvePullRequest).not.toHaveBeenCalled();
     expect(github.enableAutoMerge).not.toHaveBeenCalled();
     expect(github.mergePullRequest).not.toHaveBeenCalled();
@@ -301,6 +328,7 @@ describe("sealPullRequest", () => {
       approved: false,
       reason: expect.stringContaining("README.md is a symlink at head"),
     });
+    expect(github.dismissPreviousApprovals).toHaveBeenCalledWith("PR_node_id");
     expect(github.approvePullRequest).not.toHaveBeenCalled();
   });
 

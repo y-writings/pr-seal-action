@@ -34,6 +34,7 @@ describe("run", () => {
       fetchFileModes: vi.fn(),
       approvePullRequest: vi.fn(),
       dismissPullRequestReview: vi.fn(),
+      dismissPreviousApprovals: vi.fn(),
       enableAutoMerge: vi.fn(),
       mergePullRequest: vi.fn(),
     };
@@ -125,6 +126,7 @@ describe("run", () => {
       fetchFileModes: vi.fn(),
       approvePullRequest: vi.fn(),
       dismissPullRequestReview: vi.fn(),
+      dismissPreviousApprovals: vi.fn(),
       enableAutoMerge: vi.fn(),
       mergePullRequest: vi.fn(),
     };
@@ -167,6 +169,7 @@ describe("run", () => {
         fetchFileModes: vi.fn(),
         approvePullRequest: vi.fn(),
         dismissPullRequestReview: vi.fn(),
+        dismissPreviousApprovals: vi.fn(),
         enableAutoMerge: vi.fn(),
         mergePullRequest: vi.fn(),
       })),

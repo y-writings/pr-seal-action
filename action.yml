@@ -29,7 +29,7 @@ inputs:
     description: Newline-separated glob patterns. A match rejects the path even when an allow path, allow pattern, or path preset would accept it.
     required: false
   path-preset:
-    description: Built-in path policy. docs-and-config allows documentation and non-executable configuration and rejects workflows, scripts, lockfiles, and CI config. Implies regular-file checks. Defaults to none.
+    description: Built-in path policy. docs-and-config allows documentation and non-executable configuration and rejects workflows, scripts, lockfiles, CI config, and config that can run or load code. Implies regular-file checks. Defaults to none.
     required: false
     default: none
   require-regular-files:
@@ -37,7 +37,7 @@ inputs:
     required: false
     default: "false"
   approve-token:
-    description: Token used only to create or dismiss the approval review.
+    description: Token used to create approval reviews and dismiss this action's earlier approvals when the PR becomes ineligible or changes after approval.
     required: true
   merge-token:
     description: Token used to read the pull request and git metadata, enable auto-merge, or merge the pull request.
@@ -47,7 +47,7 @@ inputs:
     required: false
     default: squash
   approve-body:
-    description: Body for the automated approval review.
+    description: Body for the automated approval review. A hidden marker is appended to identify approvals created by this action.
     required: false
   auto-merge:
     description: When false, approve the verified head and do not enable auto-merge or merge. Defaults to true.

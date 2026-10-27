@@ -16,11 +16,12 @@ The default contract is unchanged: one expected author, exact allowed paths, app
 4. Requires the PR author login to exactly match `expected-author`, unless the caller opts out or lists more than one author.
 5. Requires every changed file path to match the path policy. With only `allowed-paths`, that is still an exact match.
 6. When regular-file checks are on, requires git mode `100644` for every side of the diff the change touches.
-7. Reads the pull request again and stops if the head SHA, base SHA, or open state changed.
-8. Creates an approval review with `approve-token` against the verified head SHA.
-9. Reads the pull request again. If it changed, dismisses that approval and fails.
-10. When `auto-merge` is true, enables auto-merge with `merge-token` and `expectedHeadOid` set to the verified head SHA.
-11. If GitHub rejects auto-merge because the PR is already in clean status, directly merges the PR with the same verified head SHA and merge method.
+7. If the PR fails the author, path, or file-mode policy, dismisses earlier approvals created by this action using the same approver token.
+8. Reads the pull request again and stops if the head SHA, base SHA, or open state changed.
+9. Creates an approval review with `approve-token` against the verified head SHA.
+10. Reads the pull request again. If it changed, dismisses that approval and fails.
+11. When `auto-merge` is true, enables auto-merge with `merge-token` and `expectedHeadOid` set to the verified head SHA.
+12. If GitHub rejects auto-merge because the PR is already in clean status, directly merges the PR with the same verified head SHA and merge method.
 
 If verification or a privileged operation fails, the action fails closed. Set `on-ineligible` to `skip` to report a policy rejection through outputs instead of failing the job. Missing data, API failures, unrecognized git modes, approval or merge failures, and a moved head or base still fail the job.
 
@@ -51,14 +52,14 @@ Use repository automatic head branch deletion or a separate cleanup workflow if 
 | `denied-patterns` | No |  | Newline-separated globs. A match always rejects the path. |
 | `path-preset` | No | `none` | `docs-and-config` allows documentation and non-executable configuration. Its denials always win over caller allow paths and patterns, and it forces regular-file checks on. |
 | `require-regular-files` | No | `false` | Reject executable bits, symlinks, submodules, and directories. Forced on by `docs-and-config`. |
-| `approve-token` | Yes |  | Token used to create and, if the head moves, dismiss the approval review. |
+| `approve-token` | Yes |  | Token used to create approval reviews and dismiss this action's earlier approvals when the PR becomes ineligible or the head moves. |
 | `merge-token` | Yes |  | Token used to read the PR and git metadata, enable auto-merge, or merge. |
 | `merge-method` | No | `squash` | Merge method when auto-merge is enabled. One of `squash`, `merge`, or `rebase`. |
-| `approve-body` | No | Automated verification message | Body for the approval review. |
+| `approve-body` | No | Automated verification message | Body for the approval review. The action appends a hidden marker to identify its approvals. |
 | `auto-merge` | No | `true` | When `false`, approve only. |
 | `on-ineligible` | No | `fail` | `skip` sets `eligible=false` and a `reason` instead of failing the job. |
 
-`docs-and-config` allows markdown and other documentation, license and notice files, images, and a fixed set of non-executable config files such as `.gitignore`, `.editorconfig`, `cliff.toml`, and `tsconfig.json`. It rejects workflows and composite actions, `action.yml`, scripts and other source files, lockfiles, package manifests, Dockerfiles, and other CI or build files. A file that is not on the allowlist and not on the denylist stays ineligible unless the caller also lists it in `allowed-paths` or `allowed-patterns`.
+`docs-and-config` allows markdown and other documentation, license and notice files, images, and a fixed set of non-executable config files such as `.gitignore` and `.editorconfig`. It rejects workflows and composite actions, `action.yml`, scripts and other source files, lockfiles, package manifests, Dockerfiles, and other CI or build files. It also rejects configuration files that can run commands or load code, including `cliff.toml`, Prettier, markdownlint, commitlint, Biome, and TypeScript project configuration. These denials cannot be overridden with caller allow paths or patterns. A file that is neither allowed nor denied stays ineligible unless the caller lists it in `allowed-paths` or `allowed-patterns`.
 
 A glob such as `**/*.md` also matches markdown under `.github/workflows`. Use `path-preset: docs-and-config`, or a denied pattern such as `.github/workflows/**`, when that directory must stay excluded.
 
@@ -152,7 +153,7 @@ jobs:
           permission-pull-requests: write
       - name: Approve documentation or non-executable config
         id: seal
-        uses: y-writings/pr-seal-action@v1
+        uses: y-writings/pr-seal-action@<commit-sha>
         with:
           pull-request-number: ${{ github.event.pull_request.number }}
           require-expected-author: false
@@ -183,6 +184,10 @@ Do not use broad organization-wide credentials when a repository-scoped GitHub A
 With the default inputs, this action fails when the PR author differs from `expected-author`, when any changed file is outside `allowed-paths`, when a changed file was renamed, when the PR is not open, when the PR node ID or head or base SHA cannot be resolved, when approval fails, or when GitHub rejects both auto-merge enablement and the clean-status direct merge path.
 
 Denied patterns, and the built-in denials of `docs-and-config`, win over `allowed-paths` and `allowed-patterns`. The preset's regular-file check cannot be turned off. Executable files, symlinks, submodules, and directories are out of scope when that check is on. An unrecognized git mode fails the job instead of being treated as ineligible.
+
+On an author, path, or file-mode rejection, the action looks for its own earlier approvals and dismisses them before returning a skipped result or failing. It identifies them by a hidden marker in the review body and the approver token's identity, so approvals created by the owner-comment job or another reviewer are left alone. Failure to list or dismiss these reviews fails the job.
+
+Enable stale-review dismissal in branch protection or repository rules for protection when a workflow cannot run or GitHub rejects a dismissal. A failed action job alone does not revoke an approval that already exists.
 
 Auto-merge and direct merge are both requested with GitHub GraphQL `expectedHeadOid`. Approval is requested with `commitOID`. Before and after approval, the action reads the head SHA and base SHA again. If either changed, or the pull request is no longer open, it does not merge. An approval created against the old head is dismissed.
 

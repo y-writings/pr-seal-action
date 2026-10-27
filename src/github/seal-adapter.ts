@@ -6,6 +6,7 @@ import { isSafeRelativePath } from "../pr-seal/paths.js";
 import type { PullRequestDetails, PullRequestFile } from "../pr-seal/verify.js";
 
 type GraphqlClient = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
+const APPROVAL_MARKER = "<!-- pr-seal-action:automated-approval -->";
 
 interface AddPullRequestReviewResponse {
   addPullRequestReview: {
@@ -17,6 +18,15 @@ interface DismissPullRequestReviewResponse {
   dismissPullRequestReview: {
     pullRequestReview: { id: string } | null;
   };
+}
+
+interface PreviousApprovalsResponse {
+  node: {
+    reviews?: {
+      nodes?: Array<{ id: string; state: string; body: string; viewerDidAuthor: boolean } | null> | null;
+      pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+    };
+  } | null;
 }
 
 interface EnablePullRequestAutoMergeResponse {
@@ -94,6 +104,7 @@ export interface GitHubSealAdapter {
   ): Promise<FileModeSnapshot[]>;
   approvePullRequest(pullRequestId: string, headSha: string, body: string): Promise<string>;
   dismissPullRequestReview(reviewId: string, message: string): Promise<void>;
+  dismissPreviousApprovals(pullRequestId: string): Promise<void>;
   enableAutoMerge(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
   mergePullRequest(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
 }
@@ -116,6 +127,7 @@ export function createGitHubSealAdapter(tokens: {
     approvePullRequest: (pullRequestId, headSha, body) =>
       approvePullRequest(approveGraphql, pullRequestId, headSha, body),
     dismissPullRequestReview: (reviewId, message) => dismissPullRequestReview(approveGraphql, reviewId, message),
+    dismissPreviousApprovals: (pullRequestId) => dismissPreviousApprovals(approveGraphql, pullRequestId),
     enableAutoMerge: (pullRequestId, headSha, mergeMethod) =>
       enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
     mergePullRequest: (pullRequestId, headSha, mergeMethod) =>
@@ -375,7 +387,7 @@ async function approvePullRequest(
         pullRequestReview { id }
       }
     }`,
-    { pullRequestId, commitOID: headSha, body },
+    { pullRequestId, commitOID: headSha, body: `${body}\n\n${APPROVAL_MARKER}` },
   )) as AddPullRequestReviewResponse;
 
   const reviewId = response.addPullRequestReview.pullRequestReview?.id;
@@ -384,6 +396,48 @@ async function approvePullRequest(
   }
 
   return reviewId;
+}
+
+async function dismissPreviousApprovals(graphql: GraphqlClient, pullRequestId: string): Promise<void> {
+  const reviewIds: string[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const response = (await graphql(
+      `query($pullRequestId: ID!, $cursor: String) {
+        node(id: $pullRequestId) {
+          ... on PullRequest {
+            reviews(first: 100, after: $cursor, states: [APPROVED]) {
+              nodes { id state body viewerDidAuthor }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }`,
+      { pullRequestId, cursor },
+    )) as PreviousApprovalsResponse;
+    const reviews = response.node?.reviews;
+    if (!reviews?.nodes || !reviews.pageInfo) {
+      throw new Error("GitHub did not return approval reviews for the pull request");
+    }
+    for (const review of reviews.nodes) {
+      if (!review?.id || typeof review.state !== "string" || typeof review.body !== "string" || typeof review.viewerDidAuthor !== "boolean") {
+        throw new Error("GitHub returned an incomplete approval review");
+      }
+      if (review.state === "APPROVED" && review.viewerDidAuthor && review.body.endsWith(APPROVAL_MARKER)) {
+        reviewIds.push(review.id);
+      }
+    }
+    if (!reviews.pageInfo.hasNextPage) {
+      break;
+    }
+    if (!reviews.pageInfo.endCursor) {
+      throw new Error("GitHub did not return an approval review pagination cursor");
+    }
+    cursor = reviews.pageInfo.endCursor;
+  }
+  for (const reviewId of reviewIds) {
+    await dismissPullRequestReview(graphql, reviewId, "Dismissed because the pull request no longer meets the approval policy.");
+  }
 }
 
 async function dismissPullRequestReview(graphql: GraphqlClient, reviewId: string, message: string): Promise<void> {

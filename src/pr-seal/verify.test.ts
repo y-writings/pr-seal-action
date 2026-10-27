@@ -136,6 +136,18 @@ describe("verifyPullRequestSafety", () => {
     );
   });
 
+  it("does not let an explicit allow path override command-capable preset configuration", () => {
+    const options: SafetyInputs = {
+      ...safetyInputs,
+      expectedAuthors: [],
+      allowedPaths: ["cliff.toml"],
+      pathPreset: "docs-and-config",
+    };
+
+    expect(() => verifyPullRequestSafety(basePullRequest, files("cliff.toml"), options))
+      .toThrow("cliff.toml (can run or load code)");
+  });
+
   it("rejects renamed files because the previous path cannot be safely verified", () => {
     expect(() =>
       verifyPullRequestSafety(

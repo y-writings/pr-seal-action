@@ -36444,6 +36444,7 @@ function escapeRegex(character) {
 ;// CONCATENATED MODULE: ./src/github/seal-adapter.ts
 
 
+const APPROVAL_MARKER = "<!-- pr-seal-action:automated-approval -->";
 function createGitHubSealAdapter(tokens) {
     const approveClient = getOctokit(tokens.approveToken);
     const mergeClient = getOctokit(tokens.mergeToken);
@@ -36455,6 +36456,7 @@ function createGitHubSealAdapter(tokens) {
         fetchFileModes: (owner, repo, headSha, baseSha, files) => fetchFileModes(mergeGraphql, owner, repo, headSha, baseSha, files),
         approvePullRequest: (pullRequestId, headSha, body) => approvePullRequest(approveGraphql, pullRequestId, headSha, body),
         dismissPullRequestReview: (reviewId, message) => dismissPullRequestReview(approveGraphql, reviewId, message),
+        dismissPreviousApprovals: (pullRequestId) => dismissPreviousApprovals(approveGraphql, pullRequestId),
         enableAutoMerge: (pullRequestId, headSha, mergeMethod) => enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
         mergePullRequest: (pullRequestId, headSha, mergeMethod) => mergePullRequest(mergeGraphql, pullRequestId, headSha, mergeMethod),
     };
@@ -36636,12 +36638,50 @@ async function approvePullRequest(graphql, pullRequestId, headSha, body) {
       }) {
         pullRequestReview { id }
       }
-    }`, { pullRequestId, commitOID: headSha, body }));
+    }`, { pullRequestId, commitOID: headSha, body: `${body}\n\n${APPROVAL_MARKER}` }));
     const reviewId = response.addPullRequestReview.pullRequestReview?.id;
     if (!reviewId) {
         throw new Error("GitHub did not return an approval review ID");
     }
     return reviewId;
+}
+async function dismissPreviousApprovals(graphql, pullRequestId) {
+    const reviewIds = [];
+    let cursor = null;
+    for (;;) {
+        const response = (await graphql(`query($pullRequestId: ID!, $cursor: String) {
+        node(id: $pullRequestId) {
+          ... on PullRequest {
+            reviews(first: 100, after: $cursor, states: [APPROVED]) {
+              nodes { id state body viewerDidAuthor }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }`, { pullRequestId, cursor }));
+        const reviews = response.node?.reviews;
+        if (!reviews?.nodes || !reviews.pageInfo) {
+            throw new Error("GitHub did not return approval reviews for the pull request");
+        }
+        for (const review of reviews.nodes) {
+            if (!review?.id || typeof review.state !== "string" || typeof review.body !== "string" || typeof review.viewerDidAuthor !== "boolean") {
+                throw new Error("GitHub returned an incomplete approval review");
+            }
+            if (review.state === "APPROVED" && review.viewerDidAuthor && review.body.endsWith(APPROVAL_MARKER)) {
+                reviewIds.push(review.id);
+            }
+        }
+        if (!reviews.pageInfo.hasNextPage) {
+            break;
+        }
+        if (!reviews.pageInfo.endCursor) {
+            throw new Error("GitHub did not return an approval review pagination cursor");
+        }
+        cursor = reviews.pageInfo.endCursor;
+    }
+    for (const reviewId of reviewIds) {
+        await dismissPullRequestReview(graphql, reviewId, "Dismissed because the pull request no longer meets the approval policy.");
+    }
 }
 async function dismissPullRequestReview(graphql, reviewId, message) {
     const response = (await graphql(`mutation($reviewId: ID!, $message: String!) {
@@ -36849,27 +36889,8 @@ const CONFIG_BASENAMES = new Set([
     ".editorconfig",
     ".gitignore",
     ".prettierignore",
-    ".prettierrc",
-    ".prettierrc.json",
-    ".prettierrc.yml",
-    ".prettierrc.yaml",
-    ".prettierrc.toml",
-    ".markdownlint.json",
-    ".markdownlint.yaml",
-    ".markdownlint.yml",
-    ".markdownlint-cli2.jsonc",
-    ".markdownlint-cli2.yaml",
-    ".markdownlintrc",
     "tombi.toml",
-    "cliff.toml",
     ".pinact.yaml",
-    ".commitlintrc",
-    ".commitlintrc.json",
-    ".commitlintrc.yml",
-    ".commitlintrc.yaml",
-    "jsconfig.json",
-    "biome.json",
-    "biome.jsonc",
     ".yamllint",
     ".yamllint.yml",
     ".yamllint.yaml",
@@ -37046,14 +37067,18 @@ function isAllowlisted(path) {
     if (CONFIG_BASENAMES.has(base)) {
         return true;
     }
-    if (/^tsconfig(?:\.[A-Za-z0-9_-]+)?\.json$/.test(base)) {
-        return true;
-    }
     return DOC_EXTENSIONS.has(extensionOf(base));
 }
 function knownUnsafeReason(path) {
     const base = basename(path);
     const lower = base.toLowerCase();
+    if (lower === "cliff.toml" ||
+        lower === "biome.json" ||
+        lower === "biome.jsonc" ||
+        /^(?:tsconfig|jsconfig)(?:\.[a-z0-9_-]+)?\.json$/.test(lower) ||
+        /^\.(?:prettierrc|markdownlint(?:-cli2)?|markdownlintrc|commitlintrc)(?:\..+)?$/.test(lower)) {
+        return "can run or load code";
+    }
     if (lower === "action.yml" || lower === "action.yaml") {
         return "is a GitHub Action definition";
     }
@@ -37207,16 +37232,16 @@ async function sealPullRequest(inputs, github) {
         });
     }
     catch (error) {
-        return rethrowUnlessSkipped(inputs, snapshot, error);
+        return handleIneligible(inputs, snapshot, github, error);
     }
     if (inputs.requireRegularFiles) {
         const filesWithModes = await github.fetchFileModes(owner, repo, verified.headSha, verified.baseSha, snapshot.files);
         const decision = evaluateRegularFiles(subject, filesWithModes);
         if (!decision.ok) {
-            if (decision.hard || inputs.onIneligible === "fail") {
+            if (decision.hard) {
                 throw new Error(decision.reason);
             }
-            return ineligibleResult(snapshot, decision.reason);
+            return handleIneligible(inputs, snapshot, github, new IneligiblePullRequestError(decision.reason));
         }
     }
     await assertStillPinned(github, owner, repo, inputs.pullRequestNumber, verified);
@@ -37254,8 +37279,12 @@ async function sealPullRequest(inputs, github) {
         reason: "",
     };
 }
-function rethrowUnlessSkipped(inputs, snapshot, error) {
-    if (inputs.onIneligible === "skip" && error instanceof IneligiblePullRequestError) {
+async function handleIneligible(inputs, snapshot, github, error) {
+    if (!(error instanceof IneligiblePullRequestError)) {
+        throw error;
+    }
+    await github.dismissPreviousApprovals(snapshot.pullRequest.id);
+    if (inputs.onIneligible === "skip") {
         return ineligibleResult(snapshot, error.message);
     }
     throw error;

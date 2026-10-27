@@ -34,7 +34,7 @@ export async function sealPullRequest(inputs: ActionInputs, github: GitHubSealAd
       pathPreset: inputs.pathPreset,
     });
   } catch (error) {
-    return rethrowUnlessSkipped(inputs, snapshot, error);
+    return handleIneligible(inputs, snapshot, github, error);
   }
 
   if (inputs.requireRegularFiles) {
@@ -47,10 +47,10 @@ export async function sealPullRequest(inputs: ActionInputs, github: GitHubSealAd
     );
     const decision = evaluateRegularFiles(subject, filesWithModes);
     if (!decision.ok) {
-      if (decision.hard || inputs.onIneligible === "fail") {
+      if (decision.hard) {
         throw new Error(decision.reason);
       }
-      return ineligibleResult(snapshot, decision.reason);
+      return handleIneligible(inputs, snapshot, github, new IneligiblePullRequestError(decision.reason));
     }
   }
 
@@ -91,12 +91,17 @@ export async function sealPullRequest(inputs: ActionInputs, github: GitHubSealAd
   };
 }
 
-function rethrowUnlessSkipped(
+async function handleIneligible(
   inputs: ActionInputs,
   snapshot: Awaited<ReturnType<GitHubSealAdapter["fetchPullRequestSnapshot"]>>,
+  github: GitHubSealAdapter,
   error: unknown,
-): SealResult {
-  if (inputs.onIneligible === "skip" && error instanceof IneligiblePullRequestError) {
+): Promise<SealResult> {
+  if (!(error instanceof IneligiblePullRequestError)) {
+    throw error;
+  }
+  await github.dismissPreviousApprovals(snapshot.pullRequest.id);
+  if (inputs.onIneligible === "skip") {
     return ineligibleResult(snapshot, error.message);
   }
   throw error;

@@ -76,6 +76,7 @@ describe("createGitHubSealAdapter", () => {
       fetchFileModes: expect.any(Function),
       approvePullRequest: expect.any(Function),
       dismissPullRequestReview: expect.any(Function),
+      dismissPreviousApprovals: expect.any(Function),
       enableAutoMerge: expect.any(Function),
       mergePullRequest: expect.any(Function),
     });
@@ -322,9 +323,46 @@ describe("createGitHubSealAdapter", () => {
     expect(approveGraphql).toHaveBeenCalledWith(expect.stringContaining("addPullRequestReview"), {
       pullRequestId: "PR_node_id",
       commitOID: "abc123",
-      body: "Verified.",
+      body: "Verified.\n\n<!-- pr-seal-action:automated-approval -->",
     });
     expect(approveGraphql.mock.calls[0]?.[0]).toContain("commitOID: $commitOID");
+  });
+
+  it("dismisses only this action's approvals by the approver actor across review pages", async () => {
+    const approveGraphql = vi.fn<GraphqlClient>()
+      .mockResolvedValueOnce({ node: { reviews: {
+        nodes: [
+          { id: "auto-1", state: "APPROVED", viewerDidAuthor: true, body: "Verified.\n\n<!-- pr-seal-action:automated-approval -->" },
+          { id: "owner-comment", state: "APPROVED", viewerDidAuthor: true, body: "Owner approved" },
+          { id: "other-actor", state: "APPROVED", viewerDidAuthor: false, body: "Verified.\n\n<!-- pr-seal-action:automated-approval -->" },
+        ],
+        pageInfo: { hasNextPage: true, endCursor: "next" },
+      } } })
+      .mockResolvedValueOnce({ node: { reviews: {
+        nodes: [{ id: "auto-2", state: "APPROVED", viewerDidAuthor: true, body: "Approved\n\n<!-- pr-seal-action:automated-approval -->" }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } })
+      .mockResolvedValue({ dismissPullRequestReview: { pullRequestReview: { id: "dismissed" } } });
+    const { adapter } = await createAdapter({ approveGraphql });
+
+    await adapter.dismissPreviousApprovals("PR_node_id");
+
+    expect(approveGraphql.mock.calls[0]?.[1]).toEqual({ pullRequestId: "PR_node_id", cursor: null });
+    expect(approveGraphql.mock.calls[1]?.[1]).toEqual({ pullRequestId: "PR_node_id", cursor: "next" });
+    expect(approveGraphql.mock.calls.slice(2).map(([, variables]) => variables.reviewId)).toEqual(["auto-1", "auto-2"]);
+  });
+
+  it("does not partially dismiss approvals when review pagination is incomplete", async () => {
+    const approveGraphql = vi.fn<GraphqlClient>()
+      .mockResolvedValueOnce({ node: { reviews: {
+        nodes: [{ id: "auto-1", state: "APPROVED", viewerDidAuthor: true, body: "Verified.\n\n<!-- pr-seal-action:automated-approval -->" }],
+        pageInfo: { hasNextPage: true, endCursor: "next" },
+      } } })
+      .mockResolvedValueOnce({ node: { reviews: { nodes: null, pageInfo: { hasNextPage: false, endCursor: null } } } });
+    const { adapter } = await createAdapter({ approveGraphql });
+
+    await expect(adapter.dismissPreviousApprovals("PR_node_id")).rejects.toThrow("did not return approval reviews");
+    expect(approveGraphql).toHaveBeenCalledTimes(2);
   });
 
   it("fails when GitHub does not return a review ID", async () => {
