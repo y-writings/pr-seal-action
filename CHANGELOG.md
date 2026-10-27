@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/y-writings/pr-seal-action/compare/v0.1.1...v0.2.0) (2026-10-27)
+
+
+### Features
+
+* approve documentation and non-executable config pull requests ([#47](https://github.com/y-writings/pr-seal-action/issues/47)) ([def2623](https://github.com/y-writings/pr-seal-action/commit/def2623a8f12edd497ce0108c348bc2f01e39be1))
+
 ## [0.1.1](https://github.com/y-writings/pr-seal-action/compare/v0.1.0...v0.1.1) (2026-06-26)
 
 
