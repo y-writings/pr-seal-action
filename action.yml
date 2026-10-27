@@ -1,5 +1,5 @@
 name: pr-seal-action
-description: Verify an expected-author pull request, approve it, and enable auto-merge or merge it with the verified head SHA.
+description: Verify a pull request, approve the verified head, and optionally enable auto-merge or merge it.
 author: y-writings
 
 inputs:
@@ -7,33 +7,62 @@ inputs:
     description: Repository in owner/name format. Defaults to the current workflow repository.
     required: false
   pull-request-number:
-    description: Pull request number to verify, approve, and enable auto-merge or merge.
+    description: Pull request number to verify and, when eligible, approve.
     required: true
   expected-author:
-    description: Exact GitHub login expected for the pull request author.
-    required: true
+    description: Exact GitHub login expected for the pull request author. Required unless require-expected-author is false or expected-authors is set. Enforced whenever it is set.
+    required: false
+  expected-authors:
+    description: Newline-separated GitHub logins. The author may match expected-author or any of these logins. Enforced whenever any author login is set.
+    required: false
+  require-expected-author:
+    description: When false, and no expected-author or expected-authors value is set, any author is acceptable. Defaults to true.
+    required: false
+    default: "true"
   allowed-paths:
-    description: Newline-separated file paths that the pull request is allowed to change. Paths are exact matches, not globs.
-    required: true
+    description: Newline-separated exact file paths the pull request may change. Required unless allowed-patterns or path-preset is set. Glob syntax in this input is still literal.
+    required: false
+  allowed-patterns:
+    description: Newline-separated glob patterns. A path is allowed when it matches an exact allowed path, one of these patterns, or the selected path preset. * and ? do not cross /, and ** crosses directories.
+    required: false
+  denied-patterns:
+    description: Newline-separated glob patterns. A match rejects the path even when an allow path, allow pattern, or path preset would accept it.
+    required: false
+  path-preset:
+    description: Built-in path policy. docs-and-config allows documentation and non-executable configuration and rejects workflows, scripts, lockfiles, CI config, and config that can run or load code. Implies regular-file checks. Defaults to none.
+    required: false
+    default: none
+  require-regular-files:
+    description: When true, every changed file must be a regular non-executable blob (git mode 100644) on each side of the diff the change touches. Symlinks, submodules, directories, and executable bits are rejected. Defaults to false, and docs-and-config forces it on.
+    required: false
+    default: "false"
   approve-token:
-    description: Token used only to create the approval review.
+    description: Token used to create approval reviews and dismiss this action's earlier approvals when the PR becomes ineligible or changes after approval.
     required: true
   merge-token:
-    description: Token used to read the pull request, enable auto-merge, or merge the pull request.
+    description: Token used to read the pull request and git metadata, enable auto-merge, or merge the pull request.
     required: true
   merge-method:
-    description: Merge method. One of squash, merge, or rebase.
+    description: Merge method used when auto-merge is true. One of squash, merge, or rebase.
     required: false
     default: squash
   approve-body:
-    description: Body for the automated approval review.
+    description: Body for the automated approval review. A hidden marker is appended to identify approvals created by this action.
     required: false
+  auto-merge:
+    description: When false, approve the verified head and do not enable auto-merge or merge. Defaults to true.
+    required: false
+    default: "true"
+  on-ineligible:
+    description: When skip, an out-of-scope pull request sets eligible to false and does not fail the job. Hard errors still fail the job. Defaults to fail.
+    required: false
+    default: fail
 
 outputs:
   pull-request-id:
-    description: GraphQL node ID of the verified pull request.
+    description: GraphQL node ID of the pull request that was read.
   head-sha:
-    description: Verified pull request head SHA.
+    description: Pull request head SHA observed during verification.
   changed-files:
     description: JSON array of changed file paths considered during verification.
   approved:
@@ -42,6 +71,10 @@ outputs:
     description: Whether auto-merge was enabled.
   merged:
     description: Whether the pull request was merged directly because GitHub reported it was already clean.
+  eligible:
+    description: Whether the pull request passed verification. false when on-ineligible is skip and the pull request is out of scope.
+  reason:
+    description: Empty when the pull request is eligible. Otherwise a single-line explanation of why it was not sealed.
 
 runs:
   using: node24

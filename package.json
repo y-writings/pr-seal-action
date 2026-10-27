@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "Verify, approve, and enable auto-merge for tightly-scoped pull requests.",
+  "description": "Verify and approve tightly scoped pull requests, then optionally enable auto-merge.",
   "license": "MIT",
   "packageManager": "pnpm@10.33.0",
   "scripts": {

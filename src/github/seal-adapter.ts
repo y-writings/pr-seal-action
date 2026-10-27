@@ -1,14 +1,32 @@
 import { getOctokit } from "@actions/github";
 
 import type { MergeMethod } from "../action/inputs.js";
-import type { PullRequestDetails } from "../pr-seal/verify.js";
+import type { FileModeSnapshot, GitTreeEntry } from "../pr-seal/file-mode.js";
+import { isSafeRelativePath } from "../pr-seal/paths.js";
+import type { PullRequestDetails, PullRequestFile } from "../pr-seal/verify.js";
 
 type GraphqlClient = (query: string, variables: Record<string, unknown>) => Promise<unknown>;
+const APPROVAL_MARKER = "<!-- pr-seal-action:automated-approval -->";
 
 interface AddPullRequestReviewResponse {
   addPullRequestReview: {
     pullRequestReview: { id: string } | null;
   };
+}
+
+interface DismissPullRequestReviewResponse {
+  dismissPullRequestReview: {
+    pullRequestReview: { id: string } | null;
+  };
+}
+
+interface PreviousApprovalsResponse {
+  node: {
+    reviews?: {
+      nodes?: Array<{ id: string; state: string; body: string; viewerDidAuthor: boolean } | null> | null;
+      pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+    };
+  } | null;
 }
 
 interface EnablePullRequestAutoMergeResponse {
@@ -31,6 +49,7 @@ interface PullRequestSnapshotResponse {
       state: string;
       author?: { login?: string | null } | null;
       headRefOid: string;
+      baseRefOid: string;
       files: {
         nodes?: Array<{ path?: string | null; changeType?: string | null } | null> | null;
         pageInfo: {
@@ -42,14 +61,50 @@ interface PullRequestSnapshotResponse {
   } | null;
 }
 
+interface PullRequestRefsResponse {
+  repository: {
+    pullRequest: {
+      state: string;
+      headRefOid: string;
+      baseRefOid: string;
+    } | null;
+  } | null;
+}
+
+interface TreeResponse {
+  repository: {
+    object: {
+      __typename?: string;
+      entries?: Array<{ name?: string | null; mode?: number | null; type?: string | null } | null> | null;
+    } | null;
+  } | null;
+}
+
+export interface PullRequestRefs {
+  state: string;
+  headSha: string;
+  baseSha: string;
+}
+
 export interface PullRequestSnapshot {
   pullRequest: PullRequestDetails;
   changedFiles: string[];
+  files: PullRequestFile[];
 }
 
 export interface GitHubSealAdapter {
   fetchPullRequestSnapshot(owner: string, repo: string, pullNumber: number): Promise<PullRequestSnapshot>;
+  fetchPullRequestRefs(owner: string, repo: string, pullNumber: number): Promise<PullRequestRefs>;
+  fetchFileModes(
+    owner: string,
+    repo: string,
+    headSha: string,
+    baseSha: string,
+    files: readonly PullRequestFile[],
+  ): Promise<FileModeSnapshot[]>;
   approvePullRequest(pullRequestId: string, headSha: string, body: string): Promise<string>;
+  dismissPullRequestReview(reviewId: string, message: string): Promise<void>;
+  dismissPreviousApprovals(pullRequestId: string): Promise<void>;
   enableAutoMerge(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
   mergePullRequest(pullRequestId: string, headSha: string, mergeMethod: MergeMethod): Promise<void>;
 }
@@ -66,8 +121,13 @@ export function createGitHubSealAdapter(tokens: {
   return {
     fetchPullRequestSnapshot: (owner, repo, pullNumber) =>
       fetchPullRequestSnapshot(mergeGraphql, owner, repo, pullNumber),
+    fetchPullRequestRefs: (owner, repo, pullNumber) => fetchPullRequestRefs(mergeGraphql, owner, repo, pullNumber),
+    fetchFileModes: (owner, repo, headSha, baseSha, files) =>
+      fetchFileModes(mergeGraphql, owner, repo, headSha, baseSha, files),
     approvePullRequest: (pullRequestId, headSha, body) =>
       approvePullRequest(approveGraphql, pullRequestId, headSha, body),
+    dismissPullRequestReview: (reviewId, message) => dismissPullRequestReview(approveGraphql, reviewId, message),
+    dismissPreviousApprovals: (pullRequestId) => dismissPreviousApprovals(approveGraphql, pullRequestId),
     enableAutoMerge: (pullRequestId, headSha, mergeMethod) =>
       enableAutoMerge(mergeGraphql, pullRequestId, headSha, mergeMethod),
     mergePullRequest: (pullRequestId, headSha, mergeMethod) =>
@@ -81,9 +141,10 @@ async function fetchPullRequestSnapshot(
   repo: string,
   pullNumber: number,
 ): Promise<PullRequestSnapshot> {
-  const changedFiles: string[] = [];
+  const files: PullRequestFile[] = [];
   let fileCursor: string | null = null;
   let firstHeadSha: string | undefined;
+  let firstBaseSha: string | undefined;
   let pullRequest: PullRequestDetails | undefined;
 
   for (;;) {
@@ -96,6 +157,7 @@ async function fetchPullRequestSnapshot(
             state
             author { login }
             headRefOid
+            baseRefOid
             files(first: 100, after: $fileCursor) {
               nodes { path changeType }
               pageInfo { hasNextPage endCursor }
@@ -110,20 +172,30 @@ async function fetchPullRequestSnapshot(
     if (!data) {
       throw new Error(`Failed to resolve pull request ${owner}/${repo}#${pullNumber}`);
     }
+    if (!data.headRefOid || !data.baseRefOid) {
+      throw new Error(`Failed to resolve pull request refs for ${owner}/${repo}#${pullNumber}`);
+    }
 
     if (firstHeadSha && data.headRefOid !== firstHeadSha) {
       throw new Error(
         `Refusing to seal ${owner}/${repo}#${pullNumber} because changed file pagination observed multiple head SHAs: ${firstHeadSha}, ${data.headRefOid}`,
       );
     }
+    if (firstBaseSha && data.baseRefOid !== firstBaseSha) {
+      throw new Error(
+        `Refusing to seal ${owner}/${repo}#${pullNumber} because changed file pagination observed multiple base SHAs: ${firstBaseSha}, ${data.baseRefOid}`,
+      );
+    }
 
     firstHeadSha = data.headRefOid;
+    firstBaseSha = data.baseRefOid;
     pullRequest = {
       id: data.id,
       number: data.number,
       state: data.state.toLowerCase(),
       authorLogin: data.author?.login ?? "",
       headSha: data.headRefOid,
+      baseSha: data.baseRefOid,
     };
 
     if (!data.files.nodes) {
@@ -134,12 +206,7 @@ async function fetchPullRequestSnapshot(
       if (!file?.path || !file.changeType) {
         throw new Error(`GitHub returned an incomplete changed-file node for ${owner}/${repo}#${pullNumber}`);
       }
-      if (file.changeType === "RENAMED") {
-        throw new Error(
-          `Refusing to seal ${owner}/${repo}#${pullNumber} because renamed files cannot be safely verified: ${file.path}`,
-        );
-      }
-      changedFiles.push(file.path);
+      files.push({ path: file.path, changeType: file.changeType });
     }
 
     if (!data.files.pageInfo.hasNextPage) {
@@ -153,7 +220,154 @@ async function fetchPullRequestSnapshot(
     fileCursor = data.files.pageInfo.endCursor;
   }
 
-  return { pullRequest: pullRequest!, changedFiles };
+  return {
+    pullRequest: pullRequest!,
+    changedFiles: files.map((file) => file.path),
+    files,
+  };
+}
+
+async function fetchPullRequestRefs(
+  graphql: GraphqlClient,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+): Promise<PullRequestRefs> {
+  const response = (await graphql(
+    `query($owner: String!, $repo: String!, $pullNumber: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pullNumber) {
+          state
+          headRefOid
+          baseRefOid
+        }
+      }
+    }`,
+    { owner, repo, pullNumber },
+  )) as PullRequestRefsResponse;
+
+  const pullRequest = response.repository?.pullRequest;
+  if (!pullRequest?.headRefOid || !pullRequest.baseRefOid) {
+    throw new Error(`Failed to resolve pull request refs for ${owner}/${repo}#${pullNumber}`);
+  }
+
+  return {
+    state: pullRequest.state.toLowerCase(),
+    headSha: pullRequest.headRefOid,
+    baseSha: pullRequest.baseRefOid,
+  };
+}
+
+async function fetchFileModes(
+  graphql: GraphqlClient,
+  owner: string,
+  repo: string,
+  headSha: string,
+  baseSha: string,
+  files: readonly PullRequestFile[],
+): Promise<FileModeSnapshot[]> {
+  assertCommitSha(headSha, "head SHA");
+  assertCommitSha(baseSha, "base SHA");
+  const cache = new Map<string, Map<string, GitTreeEntry> | null>();
+  const snapshots: FileModeSnapshot[] = [];
+
+  for (const file of files) {
+    if (!isSafeRelativePath(file.path)) {
+      throw new Error(`Refusing to read git metadata for unsafe path ${file.path}`);
+    }
+    const changeType = file.changeType.toUpperCase();
+    const headRequired = changeType !== "DELETED";
+    const baseRequired = changeType === "DELETED" || changeType === "MODIFIED" || changeType === "CHANGED";
+    snapshots.push({
+      path: file.path,
+      changeType: file.changeType,
+      head: await lookupTreeEntry(graphql, owner, repo, headSha, file.path, headRequired, cache),
+      base: await lookupTreeEntry(graphql, owner, repo, baseSha, file.path, baseRequired, cache),
+    });
+  }
+
+  return snapshots;
+}
+
+async function lookupTreeEntry(
+  graphql: GraphqlClient,
+  owner: string,
+  repo: string,
+  sha: string,
+  filePath: string,
+  required: boolean,
+  cache: Map<string, Map<string, GitTreeEntry> | null>,
+): Promise<GitTreeEntry | null> {
+  const slash = filePath.lastIndexOf("/");
+  const directory = slash === -1 ? "" : filePath.slice(0, slash);
+  const name = slash === -1 ? filePath : filePath.slice(slash + 1);
+  const listing = await loadDirectory(graphql, owner, repo, sha, directory, cache);
+  if (!listing) {
+    if (required) {
+      throw new Error(`Git tree for ${directory || "."} at ${sha} is unavailable`);
+    }
+    return null;
+  }
+  const entry = listing.get(name) ?? null;
+  if (!entry && required) {
+    throw new Error(`Git entry ${filePath} is missing at ${sha}`);
+  }
+  return entry;
+}
+
+async function loadDirectory(
+  graphql: GraphqlClient,
+  owner: string,
+  repo: string,
+  sha: string,
+  directory: string,
+  cache: Map<string, Map<string, GitTreeEntry> | null>,
+): Promise<Map<string, GitTreeEntry> | null> {
+  const cacheKey = `${sha}:${directory}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const expression = directory.length === 0 ? `${sha}:` : `${sha}:${directory}`;
+  const response = (await graphql(
+    `query($owner: String!, $repo: String!, $expression: String!) {
+      repository(owner: $owner, name: $repo) {
+        object(expression: $expression) {
+          __typename
+          ... on Tree {
+            entries { name mode type }
+          }
+        }
+      }
+    }`,
+    { owner, repo, expression },
+  )) as TreeResponse;
+
+  const object = response.repository?.object;
+  if (!object) {
+    cache.set(cacheKey, null);
+    return null;
+  }
+  if (object.__typename !== "Tree" || !object.entries) {
+    throw new Error(`Git object ${expression} is not a tree`);
+  }
+
+  const listing = new Map<string, GitTreeEntry>();
+  for (const entry of object.entries) {
+    if (!entry?.name || typeof entry.mode !== "number" || !entry.type) {
+      throw new Error(`GitHub returned an incomplete tree entry for ${expression}`);
+    }
+    listing.set(entry.name, { mode: entry.mode, type: entry.type });
+  }
+  cache.set(cacheKey, listing);
+  return listing;
+}
+
+function assertCommitSha(sha: string, label: string): void {
+  if (!/^[0-9a-f]{40}$/i.test(sha) && !/^[0-9a-f]{64}$/i.test(sha)) {
+    throw new Error(`Refusing to read git metadata for an invalid ${label}`);
+  }
 }
 
 async function approvePullRequest(
@@ -173,7 +387,7 @@ async function approvePullRequest(
         pullRequestReview { id }
       }
     }`,
-    { pullRequestId, commitOID: headSha, body },
+    { pullRequestId, commitOID: headSha, body: `${body}\n\n${APPROVAL_MARKER}` },
   )) as AddPullRequestReviewResponse;
 
   const reviewId = response.addPullRequestReview.pullRequestReview?.id;
@@ -182,6 +396,66 @@ async function approvePullRequest(
   }
 
   return reviewId;
+}
+
+async function dismissPreviousApprovals(graphql: GraphqlClient, pullRequestId: string): Promise<void> {
+  const reviewIds: string[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const response = (await graphql(
+      `query($pullRequestId: ID!, $cursor: String) {
+        node(id: $pullRequestId) {
+          ... on PullRequest {
+            reviews(first: 100, after: $cursor, states: [APPROVED]) {
+              nodes { id state body viewerDidAuthor }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }`,
+      { pullRequestId, cursor },
+    )) as PreviousApprovalsResponse;
+    const reviews = response.node?.reviews;
+    if (!reviews?.nodes || !reviews.pageInfo) {
+      throw new Error("GitHub did not return approval reviews for the pull request");
+    }
+    for (const review of reviews.nodes) {
+      if (!review?.id || typeof review.state !== "string" || typeof review.body !== "string" || typeof review.viewerDidAuthor !== "boolean") {
+        throw new Error("GitHub returned an incomplete approval review");
+      }
+      if (review.state === "APPROVED" && review.viewerDidAuthor && review.body.endsWith(APPROVAL_MARKER)) {
+        reviewIds.push(review.id);
+      }
+    }
+    if (!reviews.pageInfo.hasNextPage) {
+      break;
+    }
+    if (!reviews.pageInfo.endCursor) {
+      throw new Error("GitHub did not return an approval review pagination cursor");
+    }
+    cursor = reviews.pageInfo.endCursor;
+  }
+  for (const reviewId of reviewIds) {
+    await dismissPullRequestReview(graphql, reviewId, "Dismissed because the pull request no longer meets the approval policy.");
+  }
+}
+
+async function dismissPullRequestReview(graphql: GraphqlClient, reviewId: string, message: string): Promise<void> {
+  const response = (await graphql(
+    `mutation($reviewId: ID!, $message: String!) {
+      dismissPullRequestReview(input: {
+        pullRequestReviewId: $reviewId,
+        message: $message
+      }) {
+        pullRequestReview { id }
+      }
+    }`,
+    { reviewId, message },
+  )) as DismissPullRequestReviewResponse;
+
+  if (!response.dismissPullRequestReview.pullRequestReview?.id) {
+    throw new Error("GitHub did not return a dismissed review ID");
+  }
 }
 
 async function enableAutoMerge(
