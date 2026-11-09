@@ -1,9 +1,5 @@
-## [weekly-2026.11.02] - 2026-10-27
-
-### 🚀 Features
-
-- Approve documentation and non-executable config pull requests (#47)
+## [weekly-2026.11.09] - 2026-11-02
 
 ### 📚 Documentation
 
-- *(changelog)* Update changelog (#46)
+- *(changelog)* Update changelog (#49)
